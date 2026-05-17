@@ -20,7 +20,7 @@ import { db } from '@/src/lib/firebase';
 import { motion, AnimatePresence } from 'motion/react';
 
 // SET THIS to your Cloudflare Worker URL once deployed
-const WORKER_URL = 'YOUR_CLOUDFLARE_WORKER_URL'; // e.g., https://seatalk-bot-webhook.username.workers.dev
+const WORKER_URL = 'https://testbotworker.jcruspero3263.workers.dev'; // e.g., https://seatalk-bot-webhook.username.workers.dev
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('chat');
@@ -290,10 +290,8 @@ function AutoReplyRules() {
             <h1 className="text-2xl font-bold tracking-tight text-neutral-900 mb-1">Auto-Replies</h1>
             <p className="text-sm text-neutral-500">Configure how the bot automatically responds to incoming messages.</p>
           </div>
+          <Button className="gap-2" onClick={() => setIsAddOpen(true)}><Plus size={16} /> New Rule</Button>
           <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2"><Plus size={16} /> New Rule</Button>
-            </DialogTrigger>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Add Auto-Reply Rule</DialogTitle>
