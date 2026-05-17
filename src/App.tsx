@@ -31,6 +31,7 @@ export default function App() {
       <main className="flex-1 overflow-hidden">
         {activeTab === 'chat' && <ChatInterface />}
         {activeTab === 'rules' && <AutoReplyRules />}
+        {activeTab === 'logs' && <LogsPanel />}
         {activeTab === 'settings' && <SettingsPanel />}
       </main>
       <Toaster />
@@ -50,6 +51,7 @@ function Sidebar({ activeTab, setActiveTab }: { activeTab: string, setActiveTab:
       <div className="px-0 md:px-3 flex-1 flex flex-col gap-2">
         <NavButton icon={<MessageSquare size={20} />} label="Conversations" active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} />
         <NavButton icon={<Bot size={20} />} label="Auto Replies" active={activeTab === 'rules'} onClick={() => setActiveTab('rules')} />
+        <NavButton icon={<CheckCircle2 size={20} />} label="Logs" active={activeTab === 'logs'} onClick={() => setActiveTab('logs')} />
         <NavButton icon={<Settings size={20} />} label="Setup Guide" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
       </div>
     </div>
@@ -384,6 +386,75 @@ function AutoReplyRules() {
             </Card>
           ))}
         </div>
+      </div>
+    </div>
+  )
+}
+
+function LogsPanel() {
+  const [logs, setLogs] = useState<any[]>([]);
+
+  useEffect(() => {
+    try {
+      const q = query(collection(db, 'logs'), orderBy('timestamp', 'desc'));
+      const unsub = onSnapshot(q, (snap) => {
+        setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      });
+      return () => unsub();
+    } catch(e) {}
+  }, []);
+
+  return (
+    <div className="h-full overflow-y-auto p-6 md:p-10 bg-neutral-50/50">
+      <div className="max-w-4xl mx-auto">
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-neutral-900 mb-1">System Logs</h1>
+            <p className="text-sm text-neutral-500">Real-time logs from your Cloudflare Worker to trace events.</p>
+          </div>
+        </div>
+
+        <Card>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead className="text-xs text-neutral-500 uppercase bg-neutral-50 border-b border-neutral-100">
+                <tr>
+                  <th className="px-4 py-3 font-medium">Time</th>
+                  <th className="px-4 py-3 font-medium">Level</th>
+                  <th className="px-4 py-3 font-medium">Message</th>
+                  <th className="px-4 py-3 font-medium">Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-8 text-center text-neutral-500">Wait for events to be logged...</td>
+                  </tr>
+                ) : logs.map(l => (
+                  <tr key={l.id} className="border-b border-neutral-50 hover:bg-neutral-50/50 transition-colors">
+                    <td className="px-4 py-3 whitespace-nowrap text-neutral-500 text-xs">
+                      {new Date(l.timestamp).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge variant="outline" className={cn(
+                        "text-[10px] px-1.5 py-0",
+                        l.level === 'info' ? "text-blue-600 border-blue-200" :
+                        l.level === 'warning' ? "text-amber-600 border-amber-200" :
+                        "text-red-600 border-red-200"
+                      )}>{l.level}</Badge>
+                    </td>
+                    <td className="px-4 py-3 font-medium text-neutral-700">{l.message}</td>
+                    <td className="px-4 py-3">
+                      <pre className="text-[10px] text-neutral-500 whitespace-pre-wrap font-mono break-all max-w-xs md:max-w-md bg-neutral-100 p-2 rounded">
+                        {l.details}
+                      </pre>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       </div>
     </div>
   )

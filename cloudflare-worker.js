@@ -12,6 +12,23 @@
 
 const SEATALK_API = 'https://openapi.seatalk.io';
 
+// --- Logging Helper ---
+async function logEvent(env, level, message, details = {}) {
+  try {
+    const timestamp = new Date().toISOString();
+    await firestoreRequest(env, 'POST', `/logs`, {
+      fields: {
+        timestamp: { stringValue: timestamp },
+        level: { stringValue: level },
+        message: { stringValue: message },
+        details: { stringValue: JSON.stringify(details) }
+      }
+    });
+  } catch(e) {
+    console.error("Failed to log", e);
+  }
+}
+
 // --- Authentication for SeaTalk ---
 let cachedToken = null;
 let tokenExpiry = 0;
@@ -220,13 +237,20 @@ export default {
       return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
     }
 
-    if (request.method === 'POST' && url.pathname.includes('/seatalk')) {
+    if (request.method === 'POST' && (url.pathname === '/' || url.pathname.includes('/seatalk'))) {
       const bodyText = await request.text();
       let body;
-      try { body = JSON.parse(bodyText); } catch { return new Response('Bad Request', { status: 400 }); }
+      try { 
+        body = JSON.parse(bodyText); 
+        await logEvent(env, 'info', 'Received SeaTalk webhook', { event_type: body.event_type, event: body.event });
+      } catch { 
+        await logEvent(env, 'error', 'Failed to parse SeaTalk JSON', { body: bodyText });
+        return new Response('Bad Request', { status: 400 }); 
+      }
 
       // SeaTalk URL Verification
       if (body.event && body.event.seatalk_challenge) {
+        await logEvent(env, 'info', 'Handling SeaTalk challenge', { challenge: body.event.seatalk_challenge });
         return new Response(JSON.stringify({ seatalk_challenge: body.event.seatalk_challenge }), {
           headers: { 'Content-Type': 'application/json' },
         });
@@ -237,6 +261,7 @@ export default {
 
       try {
         if (eventType === 'message_from_bot_subscriber') {
+          await logEvent(env, 'info', 'Processing bot subscriber message', { event });
           const content = event.message?.text?.content;
           if (content) {
             const convId = await ensureConversation(env, { chat_type: 'private', employee_code: event.employee_code, user_name: event.sender_employee_info?.en_name || event.employee_code, user_email: event.sender_employee_info?.email || '' });
@@ -244,11 +269,15 @@ export default {
             
             const reply = await findMatchingRule(env, content);
             if (reply) {
+              await logEvent(env, 'info', 'Sending auto-reply', { employeeCode: event.employee_code, reply });
               await sendPrivateMessage(env, event.employee_code, reply);
               await saveMessage(env, convId, { sender: 'bot', sender_name: 'Bot', content: reply, employee_code: event.employee_code, is_auto_reply: true });
+            } else {
+              await logEvent(env, 'info', 'No matching rule found', { content });
             }
           }
         } else if (eventType === 'new_mentioned_message_received_from_group_chat') {
+           await logEvent(env, 'info', 'Processing mentioned group message', { event });
            const content = event.message?.text?.content;
            if (content) {
              const convId = await ensureConversation(env, { chat_type: 'group', group_id: event.group_id, group_name: event.group_name || event.group_id });
@@ -256,13 +285,17 @@ export default {
              
              const reply = await findMatchingRule(env, content);
              if (reply) {
+               await logEvent(env, 'info', 'Sending group auto-reply', { groupId: event.group_id, reply });
                await sendGroupMessage(env, event.group_id, reply, event.thread_id);
                await saveMessage(env, convId, { sender: 'bot', sender_name: 'Bot', content: reply, group_id: event.group_id, is_auto_reply: true });
+             } else {
+               await logEvent(env, 'info', 'No matching group rule found', { content });
              }
            }
         }
       } catch (err) {
         console.error('Event handler error:', err);
+        await logEvent(env, 'error', 'Error in event handler', { error: err.toString(), stack: err.stack });
       }
 
       return new Response(JSON.stringify({ code: 0 }), {
@@ -270,6 +303,7 @@ export default {
       });
     }
 
+    await logEvent(env, 'warning', 'Route not found', { method: request.method, url: url.pathname });
     return new Response('Not Found', { status: 404 });
   }
 };
