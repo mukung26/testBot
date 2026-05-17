@@ -16,7 +16,7 @@ const SEATALK_API = 'https://openapi.seatalk.io';
 async function logEvent(env, level, message, details = {}) {
   try {
     const timestamp = new Date().toISOString();
-    await firestoreRequest(env, 'POST', `/logs`, {
+    const res = await firestoreRequest(env, 'POST', `/logs`, {
       fields: {
         timestamp: { stringValue: timestamp },
         level: { stringValue: level },
@@ -24,6 +24,9 @@ async function logEvent(env, level, message, details = {}) {
         details: { stringValue: JSON.stringify(details) }
       }
     });
+    if (res && res.error) {
+      console.error("Firebase rejected log:", res.error);
+    }
   } catch(e) {
     console.error("Failed to log", e);
   }
@@ -214,96 +217,126 @@ export default {
 
     const url = new URL(request.url);
 
-    // Endpoint for React App to send messages OUT using the Cloudflare Worker
-    if (url.pathname === '/api/dashboard/send' && request.method === 'POST') {
-      const body = await request.json();
-      const { conversation_id, chat_type, target_id, content } = body;
-      
-      if (chat_type === 'private') {
-         await sendPrivateMessage(env, target_id, content);
-      } else {
-         await sendGroupMessage(env, target_id, content);
+    try {
+      // Endpoint for React App to send messages OUT using the Cloudflare Worker
+      if (url.pathname === '/api/dashboard/send' && request.method === 'POST') {
+        const bodyText = await request.text();
+        let body;
+        try { body = JSON.parse(bodyText); } catch { body = {}; }
+        
+        if (body.ping) {
+          const envChecks = {
+            hasProjectId: !!env.FIREBASE_PROJECT_ID,
+            hasApiKey: !!env.FIREBASE_API_KEY,
+            hasAppId: !!env.SEATALK_APP_ID,
+            hasAppSecret: !!env.SEATALK_APP_SECRET
+          };
+          if (body.testLog) {
+            await logEvent(env, 'info', 'Ping with Test Log request', envChecks);
+          }
+          return new Response(JSON.stringify({ success: true, message: "pong", envChecks }), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+        }
+
+        const { conversation_id, chat_type, target_id, content } = body;
+        
+        if (chat_type === 'private') {
+           await sendPrivateMessage(env, target_id, content);
+        } else if (chat_type === 'group') {
+           await sendGroupMessage(env, target_id, content);
+        }
+        
+        if (conversation_id) {
+          await saveMessage(env, conversation_id, {
+            sender: 'admin',
+            sender_name: 'Admin',
+            content,
+            employee_code: chat_type === 'private' ? target_id : '',
+            group_id: chat_type === 'group' ? target_id : '',
+            is_auto_reply: false
+          });
+        }
+
+        return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
       }
-      
-      await saveMessage(env, conversation_id, {
-        sender: 'admin',
-        sender_name: 'Admin',
-        content,
-        employee_code: chat_type === 'private' ? target_id : '',
-        group_id: chat_type === 'group' ? target_id : '',
-        is_auto_reply: false
-      });
 
-      return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
-    }
+      if (request.method === 'POST' && (url.pathname === '/' || url.pathname.includes('/seatalk'))) {
+        const bodyText = await request.text();
+        let body;
+        try { 
+          body = JSON.parse(bodyText); 
+          await logEvent(env, 'info', 'Received SeaTalk webhook', { event_type: body.event_type, event: body.event });
+        } catch (e) { 
+          await logEvent(env, 'error', 'Failed to parse SeaTalk JSON', { body: bodyText, error: e.message });
+          return new Response('Bad Request', { status: 400, headers: corsHeaders }); 
+        }
 
-    if (request.method === 'POST' && (url.pathname === '/' || url.pathname.includes('/seatalk'))) {
-      const bodyText = await request.text();
-      let body;
-      try { 
-        body = JSON.parse(bodyText); 
-        await logEvent(env, 'info', 'Received SeaTalk webhook', { event_type: body.event_type, event: body.event });
-      } catch { 
-        await logEvent(env, 'error', 'Failed to parse SeaTalk JSON', { body: bodyText });
-        return new Response('Bad Request', { status: 400 }); 
-      }
+        // SeaTalk URL Verification
+        if (body.event && body.event.seatalk_challenge) {
+          await logEvent(env, 'info', 'Handling SeaTalk challenge', { challenge: body.event.seatalk_challenge });
+          return new Response(JSON.stringify({ seatalk_challenge: body.event.seatalk_challenge }), {
+            headers: { 'Content-Type': 'application/json', ...corsHeaders },
+          });
+        }
 
-      // SeaTalk URL Verification
-      if (body.event && body.event.seatalk_challenge) {
-        await logEvent(env, 'info', 'Handling SeaTalk challenge', { challenge: body.event.seatalk_challenge });
-        return new Response(JSON.stringify({ seatalk_challenge: body.event.seatalk_challenge }), {
-          headers: { 'Content-Type': 'application/json' },
+        const eventType = body.event_type;
+        const event = body.event || {};
+
+        try {
+          if (eventType === 'message_from_bot_subscriber') {
+            await logEvent(env, 'info', 'Processing bot subscriber message', { event });
+            const content = event.message?.text?.content;
+            if (content) {
+              const convId = await ensureConversation(env, { chat_type: 'private', employee_code: event.employee_code, user_name: event.sender_employee_info?.en_name || event.employee_code, user_email: event.sender_employee_info?.email || '' });
+              await saveMessage(env, convId, { sender: 'user', sender_name: event.sender_employee_info?.en_name || event.employee_code, content, employee_code: event.employee_code, message_id: event.message_id });
+              
+              const reply = await findMatchingRule(env, content);
+              if (reply) {
+                await logEvent(env, 'info', 'Sending auto-reply', { employeeCode: event.employee_code, reply });
+                await sendPrivateMessage(env, event.employee_code, reply);
+                await saveMessage(env, convId, { sender: 'bot', sender_name: 'Bot', content: reply, employee_code: event.employee_code, is_auto_reply: true });
+              } else {
+                await logEvent(env, 'info', 'No matching rule found', { content });
+              }
+            }
+          } else if (eventType === 'new_mentioned_message_received_from_group_chat') {
+             await logEvent(env, 'info', 'Processing mentioned group message', { event });
+             const content = event.message?.text?.content;
+             if (content) {
+               const convId = await ensureConversation(env, { chat_type: 'group', group_id: event.group_id, group_name: event.group_name || event.group_id });
+               await saveMessage(env, convId, { sender: 'user', sender_name: event.sender_employee_info?.en_name || event.employee_code, content, employee_code: event.employee_code, group_id: event.group_id, message_id: event.message_id });
+               
+               const reply = await findMatchingRule(env, content);
+               if (reply) {
+                 await logEvent(env, 'info', 'Sending group auto-reply', { groupId: event.group_id, reply });
+                 await sendGroupMessage(env, event.group_id, reply, event.thread_id);
+                 await saveMessage(env, convId, { sender: 'bot', sender_name: 'Bot', content: reply, group_id: event.group_id, is_auto_reply: true });
+               } else {
+                 await logEvent(env, 'info', 'No matching group rule found', { content });
+               }
+             }
+          }
+        } catch (err) {
+          console.error('Event handler error:', err);
+          await logEvent(env, 'error', 'Error in event handler', { error: err.toString(), stack: err.stack });
+        }
+
+        return new Response(JSON.stringify({ code: 0 }), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
         });
       }
 
-      const eventType = body.event_type;
-      const event = body.event || {};
-
-      try {
-        if (eventType === 'message_from_bot_subscriber') {
-          await logEvent(env, 'info', 'Processing bot subscriber message', { event });
-          const content = event.message?.text?.content;
-          if (content) {
-            const convId = await ensureConversation(env, { chat_type: 'private', employee_code: event.employee_code, user_name: event.sender_employee_info?.en_name || event.employee_code, user_email: event.sender_employee_info?.email || '' });
-            await saveMessage(env, convId, { sender: 'user', sender_name: event.sender_employee_info?.en_name || event.employee_code, content, employee_code: event.employee_code, message_id: event.message_id });
-            
-            const reply = await findMatchingRule(env, content);
-            if (reply) {
-              await logEvent(env, 'info', 'Sending auto-reply', { employeeCode: event.employee_code, reply });
-              await sendPrivateMessage(env, event.employee_code, reply);
-              await saveMessage(env, convId, { sender: 'bot', sender_name: 'Bot', content: reply, employee_code: event.employee_code, is_auto_reply: true });
-            } else {
-              await logEvent(env, 'info', 'No matching rule found', { content });
-            }
-          }
-        } else if (eventType === 'new_mentioned_message_received_from_group_chat') {
-           await logEvent(env, 'info', 'Processing mentioned group message', { event });
-           const content = event.message?.text?.content;
-           if (content) {
-             const convId = await ensureConversation(env, { chat_type: 'group', group_id: event.group_id, group_name: event.group_name || event.group_id });
-             await saveMessage(env, convId, { sender: 'user', sender_name: event.sender_employee_info?.en_name || event.employee_code, content, employee_code: event.employee_code, group_id: event.group_id, message_id: event.message_id });
-             
-             const reply = await findMatchingRule(env, content);
-             if (reply) {
-               await logEvent(env, 'info', 'Sending group auto-reply', { groupId: event.group_id, reply });
-               await sendGroupMessage(env, event.group_id, reply, event.thread_id);
-               await saveMessage(env, convId, { sender: 'bot', sender_name: 'Bot', content: reply, group_id: event.group_id, is_auto_reply: true });
-             } else {
-               await logEvent(env, 'info', 'No matching group rule found', { content });
-             }
-           }
+      await logEvent(env, 'warning', 'Route not found', { method: request.method, url: url.pathname });
+      return new Response('Not Found', { status: 404, headers: corsHeaders });
+      
+    } catch (e) {
+      console.error("Global Catch Event:", e);
+      return new Response(JSON.stringify({ error: e.message, status: "Failed" }), {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          ...corsHeaders
         }
-      } catch (err) {
-        console.error('Event handler error:', err);
-        await logEvent(env, 'error', 'Error in event handler', { error: err.toString(), stack: err.stack });
-      }
-
-      return new Response(JSON.stringify({ code: 0 }), {
-        headers: { 'Content-Type': 'application/json' },
       });
     }
-
-    await logEvent(env, 'warning', 'Route not found', { method: request.method, url: url.pathname });
-    return new Response('Not Found', { status: 404 });
   }
 };

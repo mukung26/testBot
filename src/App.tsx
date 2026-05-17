@@ -393,15 +393,23 @@ function AutoReplyRules() {
 
 function LogsPanel() {
   const [logs, setLogs] = useState<any[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     try {
       const q = query(collection(db, 'logs'), orderBy('timestamp', 'desc'));
       const unsub = onSnapshot(q, (snap) => {
+        console.log("Logs snapshot received:", snap.size, "documents");
         setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setError(null);
+      }, (err) => {
+        console.error("Logs error:", err);
+        setError(err.message);
       });
       return () => unsub();
-    } catch(e) {}
+    } catch(e: any) {
+      setError(e.message);
+    }
   }, []);
 
   return (
@@ -412,7 +420,41 @@ function LogsPanel() {
             <h1 className="text-2xl font-bold tracking-tight text-neutral-900 mb-1">System Logs</h1>
             <p className="text-sm text-neutral-500">Real-time logs from your Cloudflare Worker to trace events.</p>
           </div>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={async () => {
+              try {
+                const res = await fetch(`${WORKER_URL}/api/dashboard/send`, {
+                  method: 'POST',
+                  body: JSON.stringify({ ping: true, testLog: true }),
+                  headers: { 'Content-Type': 'application/json' }
+                });
+                const text = await res.text();
+                setError(`Ping result: ${res.status} ${text}`);
+              } catch(e: any) {
+                setError(`Ping error: ${e.message}`);
+              }
+            }}>Ping Worker & Test Log</Button>
+            <Button onClick={async () => {
+               // Let's create a test log directly from client to verify permissions and collection
+               try {
+                 await addDoc(collection(db, 'logs'), {
+                   timestamp: new Date().toISOString(),
+                   level: 'info',
+                   message: 'Test log from UI (Verify Firebase is working)',
+                   details: '{}'
+                 });
+               } catch(e: any) {
+                 setError(e.message);
+               }
+            }}>Create Test Log</Button>
+          </div>
         </div>
+
+        {error && (
+          <div className="mb-4 p-4 text-sm text-red-600 bg-red-50 rounded-lg border border-red-100">
+            <strong>Error loading logs:</strong> {error}
+          </div>
+        )}
 
         <Card>
           <div className="overflow-x-auto">
