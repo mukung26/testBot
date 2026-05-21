@@ -264,7 +264,15 @@ async function findEventRule(env, eventType) {
 
 // --- SeaTalk Sending specific helpers ---
 async function getEmployeeProfile(env, employeeCode) {
-  const result = { name: employeeCode, email: employeeCode ? `${employeeCode}@seatalk.biz` : "" };
+  let defaultEmail = employeeCode ? `${employeeCode}@seatalk.biz` : "";
+  let defaultName = employeeCode || "";
+  
+  if (employeeCode === "e_ptv9p1zy") {
+    defaultEmail = "segagt505@shopeemobile-external.com";
+    defaultName = "Segagt 505";
+  }
+
+  const result = { name: defaultName, email: defaultEmail };
   try {
     const token = await getAccessToken(env);
     const res = await fetch(
@@ -272,11 +280,12 @@ async function getEmployeeProfile(env, employeeCode) {
       {
         method: "GET",
         headers: { Authorization: `Bearer ${token}` },
-      },
+      }
     );
     if (res.ok) {
       const textBody = await res.text();
       const data = JSON.parse(textBody);
+      await logEvent(env, "info", `Profile response for ${employeeCode}`, data);
       if (data.code === 0 && data.employees && data.employees.length > 0) {
         const emp = data.employees[0];
         result.name =
@@ -284,12 +293,12 @@ async function getEmployeeProfile(env, employeeCode) {
           emp.name ||
           emp.profile?.en_name ||
           emp.profile?.name ||
-          employeeCode;
-        result.email = emp.email || (employeeCode ? `${employeeCode}@seatalk.biz` : "");
+          defaultName;
+        result.email = emp.email || defaultEmail;
       }
     }
   } catch (e) {
-    // silently fallback
+    await logEvent(env, "error", `Failed to fetch profile for ${employeeCode}`, { error: e.message });
   }
   return result;
 }

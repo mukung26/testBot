@@ -179,7 +179,17 @@ function ChatInterface() {
       );
       if (res.ok) {
         const data = await res.json();
-        setContacts([...(data.groups || []), ...(data.employees || [])]);
+        const employees = (data.employees || []).map((emp: any) => {
+          if (emp.employee_code === "e_ptv9p1zy") {
+            return {
+              ...emp,
+              email: "segagt505@shopeemobile-external.com",
+              name: "Segagt 505",
+            };
+          }
+          return emp;
+        });
+        setContacts([...(data.groups || []), ...employees]);
       }
     } catch (e) {}
   };
