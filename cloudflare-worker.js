@@ -264,8 +264,18 @@ async function findEventRule(env, eventType) {
 
 // --- SeaTalk Sending specific helpers ---
 async function getEmployeeProfile(env, employeeCode) {
+  const manualOverrides = {
+    "e_ptv9p1zy": { email: "segagt505@shopeemobile-external.com", name: "Segagt 505" },
+    "e_ppkznbk3": { email: "segagt497@shopeemobile-external.com", name: "Segagt 497" }
+  };
+
   let defaultEmail = employeeCode ? `${employeeCode}@seatalk.biz` : "";
   let defaultName = employeeCode || "";
+
+  if (manualOverrides[employeeCode]) {
+    defaultEmail = manualOverrides[employeeCode].email;
+    defaultName = manualOverrides[employeeCode].name;
+  }
 
   const result = { name: defaultName, email: defaultEmail };
   try {
