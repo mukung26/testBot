@@ -266,11 +266,6 @@ async function findEventRule(env, eventType) {
 async function getEmployeeProfile(env, employeeCode) {
   let defaultEmail = employeeCode ? `${employeeCode}@seatalk.biz` : "";
   let defaultName = employeeCode || "";
-  
-  if (employeeCode === "e_ptv9p1zy") {
-    defaultEmail = "segagt505@shopeemobile-external.com";
-    defaultName = "Segagt 505";
-  }
 
   const result = { name: defaultName, email: defaultEmail };
   try {
@@ -448,6 +443,25 @@ export default {
           }
         }
 
+        // Add employee codes from conversations for private chats
+        let convInfoByCode = new Map();
+        try {
+          const conversationsRes = await firestoreRequest(env, "GET", "/conversations");
+          if (conversationsRes && conversationsRes.documents) {
+            for (const doc of conversationsRes.documents) {
+              const code = doc.fields?.employee_code?.stringValue;
+              const uEmail = doc.fields?.user_email?.stringValue;
+              const uName = doc.fields?.user_name?.stringValue;
+              if (code) {
+                empCodesToFetch.add(code);
+                convInfoByCode.set(code, { email: uEmail, name: uName });
+              }
+            }
+          }
+        } catch (err) {
+          await logEvent(env, "error", "Failed fetching conversations for contacts", { message: err.message });
+        }
+
         // 3. Batch fetch employee profiles
         const uniqueEmp = [];
         let codesArr = Array.from(empCodesToFetch);
@@ -461,10 +475,26 @@ export default {
           for (let i = 0; i < codesArr.length; i++) {
             const code = codesArr[i];
             const p = profiles[i];
+            const convInfo = convInfoByCode.get(code);
+            
+            let email = p.email;
+            if (!email || email.endsWith("@seatalk.biz")) {
+               if (convInfo?.email && !convInfo.email.endsWith("@seatalk.biz")) {
+                 email = convInfo.email;
+               }
+            }
+            if (!email) email = code ? `${code}@seatalk.biz` : "";
+            
+            let name = p.name;
+            if (convInfo?.name && (!name || name === code || name.startsWith("e_"))) {
+               name = convInfo.name;
+            }
+            if (!name) name = code;
+
             uniqueEmp.push({
               employee_code: code,
-              email: p.email || (code ? `${code}@seatalk.biz` : ""),
-              name: p.name || code,
+              email: email,
+              name: name,
               type: "private",
             });
           }
