@@ -351,6 +351,76 @@ async function findEventRule(env, eventType) {
   return null;
 }
 
+async function resolveEmployeeCode(env, identifier) {
+  if (!identifier || !identifier.includes("@")) return identifier;
+  
+  const manualOverrides = {
+    "segagt505@shopeemobile-external.com": "e_ptv9p1zy",
+    "segagt505@shopeemobilee-external.com": "e_ptv9p1zy", // typo fallback
+    "segagt497@shopeemobile-external.com": "e_ppkznbk3",
+    "jcruspero3263@gmail.com": "e_ptv9p1zy" // assuming the user is also mapped here, per UI
+  };
+
+  const lowerIdentifier = identifier.toLowerCase();
+  
+  // Return manual override if found
+  if (manualOverrides[lowerIdentifier]) {
+    return manualOverrides[lowerIdentifier];
+  }
+  
+  try {
+    const token = await getAccessToken(env);
+    
+    // Try POST /contacts/v2/get_employee_code_with_email
+    const res = await fetch(`${SEATALK_API}/contacts/v2/get_employee_code_with_email`, {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}` 
+      },
+      body: JSON.stringify({ emails: [identifier] })
+    });
+    
+    let rawResult = await res.text();
+    await logEvent(env, "info", "Resolve Email Debug 1", { identifier, rawResult });
+    
+    let data;
+    try { data = JSON.parse(rawResult); } catch(e){}
+
+    if (data && data.code === 0 && data.employees) {
+      for (const emp of data.employees) {
+        if (emp.email === identifier || (emp.email || "").toLowerCase() === lowerIdentifier) {
+           if (emp.employee_code && emp.employee_status !== 0) {
+             return emp.employee_code;
+           }
+        }
+      }
+      if (data.employees.length > 0 && data.employees[0].employee_code) {
+        return data.employees[0].employee_code;
+      }
+    }
+
+    // Try GET profile with employee_code=email (fallback)
+    const res2 = await fetch(`${SEATALK_API}/contacts/v2/profile?employee_code=${encodeURIComponent(identifier)}`, {
+      method: "GET",
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    let rawResult2 = await res2.text();
+    await logEvent(env, "info", "Resolve Email Debug 2", { identifier, rawResult2 });
+    let data2;
+    try { data2 = JSON.parse(rawResult2); } catch(e){}
+    if (data2 && data2.code === 0 && data2.employee && data2.employee.employee_code) {
+       return data2.employee.employee_code;
+    }
+  } catch (e) {
+    await logEvent(env, "error", "Failed to resolve employee code for " + identifier, { error: e.message });
+  }
+  
+  // As a final fallback if we are completely denied API access but need an email, 
+  // wait and see if we can perform a heuristic fallback or just return identifier
+  return identifier;
+}
+
 // --- SeaTalk Sending specific helpers ---
 async function getEmployeeProfile(env, employeeCode) {
   const manualOverrides = {
@@ -716,11 +786,16 @@ export default {
           conversation_id,
         });
 
+        let actualEmployeeCode = target_id;
+        if (chat_type === "private") {
+           actualEmployeeCode = await resolveEmployeeCode(env, target_id);
+        }
+
         let convId = conversation_id;
         if (convId && convId.startsWith("new_")) {
           convId = await ensureConversation(env, {
             chat_type,
-            employee_code: chat_type === "private" ? target_id : "",
+            employee_code: chat_type === "private" ? actualEmployeeCode : "",
             user_name:
               chat_type === "private"
                 ? user_name || user_email || target_id
@@ -732,7 +807,7 @@ export default {
         }
 
         if (chat_type === "private") {
-          await sendPrivateMessage(env, target_id, content, message_obj, thread_id);
+          await sendPrivateMessage(env, actualEmployeeCode, content, message_obj, thread_id);
         } else if (chat_type === "group") {
           await sendGroupMessage(env, target_id, content, thread_id, message_obj);
         }
@@ -743,7 +818,7 @@ export default {
             sender: "admin",
             sender_name: "Admin",
             content,
-            employee_code: chat_type === "private" ? target_id : "",
+            employee_code: chat_type === "private" ? actualEmployeeCode : "",
             group_id: chat_type === "group" ? target_id : "",
             is_auto_reply: false,
             tag,
