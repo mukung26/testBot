@@ -348,13 +348,13 @@ async function getEmployeeProfile(env, employeeCode) {
     "e_ppkznbk3": { email: "segagt497@shopeemobile-external.com" }
   };
 
-  let defaultEmail = employeeCode ? `${employeeCode}@seatalk.biz` : "";
+  let defaultEmail = "";
 
   if (manualOverrides[employeeCode]) {
     defaultEmail = manualOverrides[employeeCode].email;
   }
 
-  const result = { name: defaultEmail, email: defaultEmail, nickname: defaultEmail };
+  const result = { name: defaultEmail || employeeCode, email: defaultEmail, nickname: defaultEmail || employeeCode };
   try {
     const token = await getAccessToken(env);
     const res = await fetch(
@@ -371,8 +371,8 @@ async function getEmployeeProfile(env, employeeCode) {
       if (data.code === 0 && data.employees && data.employees.length > 0) {
         const emp = data.employees[0];
         result.email = emp.company_email || emp.email || defaultEmail;
-        result.name = result.email;
-        result.nickname = result.email;
+        result.name = emp.en_name || emp.name || result.email;
+        result.nickname = emp.en_name || emp.name || result.email;
       }
     }
   } catch (e) {
@@ -557,12 +557,16 @@ export default {
         // 3. Batch fetch employee profiles
         const uniqueEmp = [];
         let codesArr = Array.from(empCodesToFetch);
-        if (codesArr.length > 50) codesArr = codesArr.slice(0, 50);
 
         if (codesArr.length > 0) {
-          const profiles = await Promise.all(
-            codesArr.map((c) => getEmployeeProfile(env, c))
-          );
+          const profiles = [];
+          for (let b = 0; b < codesArr.length; b += 50) {
+             const batch = codesArr.slice(b, b + 50);
+             const batchProfiles = await Promise.all(
+               batch.map((c) => getEmployeeProfile(env, c))
+             );
+             profiles.push(...batchProfiles);
+          }
           
           for (let i = 0; i < codesArr.length; i++) {
             const code = codesArr[i];
@@ -575,7 +579,7 @@ export default {
                  email = convInfo.email;
                }
             }
-            if (!email) email = code ? `${code}@seatalk.biz` : "";
+            if (!email) email = "";
             
             let name = p.name;
             if (convInfo?.name && (!name || name === code || name.startsWith("e_"))) {
@@ -619,6 +623,29 @@ export default {
         } catch (e) {
           return new Response("Error proxying file", { status: 500, headers: corsHeaders });
         }
+      }
+
+      if (url.pathname === "/api/dashboard/ensure_conversation" && request.method === "POST") {
+        const bodyText = await request.text();
+        let body;
+        try {
+          body = JSON.parse(bodyText);
+        } catch {
+          body = {};
+        }
+
+        let convId = await ensureConversation(env, {
+          chat_type: body.chat_type,
+          employee_code: body.employee_code || "",
+          user_name: body.user_name || "",
+          user_email: body.user_email || "",
+          group_id: body.group_id || "",
+          group_name: body.group_name || "",
+        });
+
+        return new Response(JSON.stringify({ success: true, conversation_id: convId }), {
+          headers: { "Content-Type": "application/json", ...corsHeaders }
+        });
       }
 
       // Endpoint for React App to send messages OUT using the Cloudflare Worker
@@ -2418,7 +2445,7 @@ function ChatInterface() {
     if (c.user_email && !c.user_email.endsWith("@seatalk.biz")) {
       return c.user_email;
     }
-    return contact?.email || c.user_email || (c.employee_code ? `${c.employee_code}@seatalk.biz` : "Unknown User");
+    return contact?.email || c.user_email || c.user_name || "Unknown User";
   };
 
   const getDisplaySubName = (c: any) => {
@@ -2430,7 +2457,7 @@ function ChatInterface() {
     if (c.user_email && !c.user_email.endsWith("@seatalk.biz")) {
       return c.user_email;
     }
-    return contact?.email || c.user_email || (c.employee_code ? `${c.employee_code}@seatalk.biz` : "Private Chat");
+    return contact?.email || c.user_email || "Private Chat";
   };
 
   const sendMessage = async () => {
@@ -2546,44 +2573,44 @@ function ChatInterface() {
                           .includes(contactSearch.toLowerCase()) ||
                         (c.email || "")
                           .toLowerCase()
-                          .includes(contactSearch.toLowerCase()) ||
-                        (c.employee_code || c.id || "")
-                          .toLowerCase()
-                          .includes(contactSearch.toLowerCase()),
+                          .includes(contactSearch.toLowerCase())
                     )
+                    .filter((c) => c.type === "group" || (c.email && !c.email.endsWith("@seatalk.biz")) || (c.name && !c.name.startsWith("e_")))
                     .map((c, i) => (
                       <button
                         key={i}
                         className="w-full text-left p-3 hover:bg-neutral-50 border-b last:border-0 rounded-sm mb-1 transition-colors flex items-center justify-between"
-                        onClick={() => {
-                          // Instead of calling worker just to make a conversation,
-                          // we can just pretend it's active. Let's create a local mock until user sends a message.
-                          // Wait, we need a conversation ID.
-                          const newConvId = "new_" + Date.now();
-                          setConversations([
-                            {
-                              id: newConvId,
-                              chat_type: c.type,
-                              employee_code: c.employee_code || "",
-                              user_name: c.name || "",
-                              user_email: c.email || "",
-                              group_id: c.id || "",
-                              group_name: c.name || "",
-                              last_message: "",
-                              last_message_time: new Date().toISOString(),
-                              unread_count: 0,
-                            },
-                            ...conversations,
-                          ]);
-                          setActiveConvId(newConvId);
-                          setIsNewChatOpen(false);
+                        onClick={async () => {
+                          try {
+                            const res = await fetch(`${WORKER_URL.replace(/\/$/, "")}/api/dashboard/ensure_conversation`, {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                chat_type: c.type,
+                                employee_code: c.employee_code || "",
+                                user_name: c.name || "",
+                                user_email: c.email || "",
+                                group_id: c.id || "",
+                                group_name: c.name || "",
+                              })
+                            });
+                            const data = await res.json();
+                            if (data.success && data.conversation_id) {
+                               setActiveConvId(data.conversation_id);
+                               setIsNewChatOpen(false);
+                            } else {
+                               toast.error("Failed to start conversation");
+                            }
+                          } catch (e) {
+                             toast.error("Failed to start conversation");
+                          }
                         }}
                       >
                         <div>
                           <div className="font-medium">
                             {c.type === "group"
                               ? c.name || c.id
-                              : c.email || (c.employee_code ? `${c.employee_code}@seatalk.biz` : c.name) || "Unknown User"}
+                              : c.email || c.name || "Unknown User"}
                           </div>
                           <div className="text-xs text-neutral-500">
                             {c.type === "group" ? "Group Chat" : "Private Chat"}

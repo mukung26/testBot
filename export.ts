@@ -1,6 +1,6 @@
 import fs from "fs";
 
-let firebaseConfig = {};
+let firebaseConfig: any = {};
 if (fs.existsSync("firebase-applet-config.json")) {
   firebaseConfig = JSON.parse(fs.readFileSync("firebase-applet-config.json", "utf8"));
 }

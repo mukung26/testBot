@@ -58,6 +58,10 @@ import {
   MessageSquareQuote,
   AtSign,
   Download,
+  Clock,
+  Terminal,
+  Lock,
+  Calendar,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Toaster } from "@/components/ui/sonner";
@@ -146,6 +150,8 @@ export default function App() {
       <main className="flex-1 overflow-hidden">
         {activeTab === "chat" && <ChatInterface />}
         {activeTab === "rules" && <AutoReplyRules />}
+        {activeTab === "broadcasts" && <BroadcastsScheduler />}
+        {activeTab === "playground" && <WorkplacePlayground />}
         {activeTab === "logs" && <LogsPanel />}
         {activeTab === "settings" && <SettingsPanel />}
       </main>
@@ -183,6 +189,18 @@ function Sidebar({
           label="Auto Replies"
           active={activeTab === "rules"}
           onClick={() => setActiveTab("rules")}
+        />
+        <NavButton
+          icon={<Clock size={20} />}
+          label="Scheduler"
+          active={activeTab === "broadcasts"}
+          onClick={() => setActiveTab("broadcasts")}
+        />
+        <NavButton
+          icon={<Terminal size={20} />}
+          label="Workplace Playground"
+          active={activeTab === "playground"}
+          onClick={() => setActiveTab("playground")}
         />
         <NavButton
           icon={<CheckCircle2 size={20} />}
@@ -883,7 +901,7 @@ function ChatInterface() {
     if (c.user_email && !c.user_email.endsWith("@seatalk.biz")) {
       return c.user_email;
     }
-    return contact?.email || c.user_email || (c.employee_code ? `${c.employee_code}@seatalk.biz` : "Unknown User");
+    return contact?.email || c.user_email || c.user_name || "Unknown User";
   };
 
   const getDisplaySubName = (c: any) => {
@@ -895,7 +913,7 @@ function ChatInterface() {
     if (c.user_email && !c.user_email.endsWith("@seatalk.biz")) {
       return c.user_email;
     }
-    return contact?.email || c.user_email || (c.employee_code ? `${c.employee_code}@seatalk.biz` : "Private Chat");
+    return contact?.email || c.user_email || "Private Chat";
   };
 
   const sendMessage = async () => {
@@ -1011,44 +1029,44 @@ function ChatInterface() {
                           .includes(contactSearch.toLowerCase()) ||
                         (c.email || "")
                           .toLowerCase()
-                          .includes(contactSearch.toLowerCase()) ||
-                        (c.employee_code || c.id || "")
-                          .toLowerCase()
-                          .includes(contactSearch.toLowerCase()),
+                          .includes(contactSearch.toLowerCase())
                     )
+                    .filter((c) => c.type === "group" || (c.email && !c.email.endsWith("@seatalk.biz")) || (c.name && !c.name.startsWith("e_")))
                     .map((c, i) => (
                       <button
                         key={i}
                         className="w-full text-left p-3 hover:bg-neutral-50 border-b last:border-0 rounded-sm mb-1 transition-colors flex items-center justify-between"
-                        onClick={() => {
-                          // Instead of calling worker just to make a conversation,
-                          // we can just pretend it's active. Let's create a local mock until user sends a message.
-                          // Wait, we need a conversation ID.
-                          const newConvId = "new_" + Date.now();
-                          setConversations([
-                            {
-                              id: newConvId,
-                              chat_type: c.type,
-                              employee_code: c.employee_code || "",
-                              user_name: c.name || "",
-                              user_email: c.email || "",
-                              group_id: c.id || "",
-                              group_name: c.name || "",
-                              last_message: "",
-                              last_message_time: new Date().toISOString(),
-                              unread_count: 0,
-                            },
-                            ...conversations,
-                          ]);
-                          setActiveConvId(newConvId);
-                          setIsNewChatOpen(false);
+                        onClick={async () => {
+                          try {
+                            const res = await fetch(`${WORKER_URL.replace(/\/$/, "")}/api/dashboard/ensure_conversation`, {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                chat_type: c.type,
+                                employee_code: c.employee_code || "",
+                                user_name: c.name || "",
+                                user_email: c.email || "",
+                                group_id: c.id || "",
+                                group_name: c.name || "",
+                              })
+                            });
+                            const data = await res.json();
+                            if (data.success && data.conversation_id) {
+                               setActiveConvId(data.conversation_id);
+                               setIsNewChatOpen(false);
+                            } else {
+                               toast.error("Failed to start conversation");
+                            }
+                          } catch (e) {
+                             toast.error("Failed to start conversation");
+                          }
                         }}
                       >
                         <div>
                           <div className="font-medium">
                             {c.type === "group"
                               ? c.name || c.id
-                              : c.email || (c.employee_code ? `${c.employee_code}@seatalk.biz` : c.name) || "Unknown User"}
+                              : c.email || c.name || "Unknown User"}
                           </div>
                           <div className="text-xs text-neutral-500">
                             {c.type === "group" ? "Group Chat" : "Private Chat"}
@@ -2371,6 +2389,8 @@ function AutoReplyRules() {
   const [triggerType, setTriggerType] = useState("keyword");
   const [keywords, setKeywords] = useState("");
   const [matchType, setMatchType] = useState("contains");
+  const [permissionType, setPermissionType] = useState("everyone");
+  const [allowedEmails, setAllowedEmails] = useState("");
   const [replyMessage, setReplyMessage] = useState("");
   const [priority, setPriority] = useState("0");
 
@@ -2398,6 +2418,8 @@ function AutoReplyRules() {
               )
             : "[]",
         match_type: matchType,
+        permission_type: permissionType,
+        allowed_emails: allowedEmails,
         reply_message: replyMessage,
         is_active: true,
         priority: parseInt(priority) || 0,
@@ -2405,6 +2427,8 @@ function AutoReplyRules() {
       setIsAddOpen(false);
       setKeywords("");
       setReplyMessage("");
+      setPermissionType("everyone");
+      setAllowedEmails("");
       setPriority("0");
       toast.success("Rule added");
     } catch (e) {
@@ -2490,10 +2514,43 @@ function AutoReplyRules() {
                           <SelectItem value="starts_with">
                             Starts With
                           </SelectItem>
+                          <SelectItem value="ends_with">
+                            Ends With
+                          </SelectItem>
+                          <SelectItem value="regex">
+                            Regex Match (Patterns)
+                          </SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
                   </>
+                )}
+
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Execution Permission</label>
+                  <Select value={permissionType} onValueChange={setPermissionType}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="everyone">Everyone (Open)</SelectItem>
+                      <SelectItem value="group_admin">Group Administrators Only</SelectItem>
+                      <SelectItem value="specific_emails">Specific Authorized Emails</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {permissionType === "specific_emails" && (
+                  <div className="space-y-1 animate-fadeIn">
+                    <label className="text-xs font-semibold text-neutral-600">Authorized Emails</label>
+                    <Input
+                      value={allowedEmails}
+                      onChange={(e) => setAllowedEmails(e.target.value)}
+                      placeholder="user1@company.com, user2@company.com"
+                      className="text-xs"
+                    />
+                    <p className="text-[10px] text-neutral-400">Comma-separated email list. Only these users can trigger this rule.</p>
+                  </div>
                 )}
 
                 <div className="space-y-1">
@@ -2562,30 +2619,63 @@ function AutoReplyRules() {
                   />
                   <div className="p-5 flex-1 flex flex-col sm:flex-row gap-4 items-start sm:items-center">
                     <div className="flex-1">
-                      <div className="flex gap-2 items-center mb-2">
+                      <div className="flex flex-wrap gap-2 items-center mb-2">
                         <Badge
                           variant="secondary"
-                          className="capitalize bg-neutral-100 text-neutral-700"
+                          className="capitalize bg-neutral-100 text-neutral-700 font-semibold"
                         >
                           {r.trigger_type.replace(/_/g, " ")}
                         </Badge>
                         {r.trigger_type === "keyword" && (
-                          <div className="flex gap-1 flex-wrap">
-                            {JSON.parse(r.keywords).map((k: string) => (
-                              <Badge
-                                key={k}
-                                variant="outline"
-                                className="text-xs bg-white text-blue-700 border-blue-200"
-                              >
-                                "{k}"
-                              </Badge>
-                            ))}
-                          </div>
+                          <>
+                            <Badge className="bg-neutral-200 text-neutral-800 text-[10px] font-mono capitalize">
+                              {r.match_type || "contains"}
+                            </Badge>
+                            <div className="flex gap-1 flex-wrap">
+                              {(() => {
+                                try {
+                                  return JSON.parse(r.keywords || "[]").map((k: string) => (
+                                    <Badge
+                                      key={k}
+                                      variant="outline"
+                                      className="text-xs bg-white text-blue-700 border-blue-200 shadow-sm font-semibold"
+                                    >
+                                      "{k}"
+                                    </Badge>
+                                  ));
+                                } catch (e) {
+                                  return null;
+                                }
+                              })()}
+                            </div>
+                          </>
                         )}
-                        <span className="text-xs text-neutral-400">
-                          Pri: {r.priority}
+                        <span className="text-xs text-neutral-400 font-medium">
+                          Priority: {r.priority || 0}
                         </span>
+                        
+                        {/* Permissions Badge */}
+                        <Badge className={cn(
+                          "text-[10px] uppercase tracking-wider font-mono shadow-sm",
+                          r.permission_type === "group_admin" 
+                            ? "bg-amber-100 text-amber-800 border-amber-200" 
+                            : r.permission_type === "specific_emails" 
+                              ? "bg-rose-100 text-rose-800 border-rose-200" 
+                              : "bg-green-100 text-green-800 border-green-200"
+                        )}>
+                          🔒 {r.permission_type === "group_admin" 
+                            ? "Admins Only" 
+                            : r.permission_type === "specific_emails" 
+                              ? "Restricted Access" 
+                              : "Everyone (Open)"}
+                        </Badge>
                       </div>
+                      
+                      {r.permission_type === "specific_emails" && r.allowed_emails && (
+                        <div className="text-[10px] text-neutral-400 font-mono mb-2 px-1">
+                          Allowed: <span className="text-neutral-600 font-semibold">{r.allowed_emails}</span>
+                        </div>
+                      )}
                       <p className="text-sm text-neutral-700 whitespace-pre-wrap bg-neutral-50 p-3 rounded-md border border-neutral-100 font-mono text-[13px]">
                         {r.reply_message}
                       </p>
@@ -2842,15 +2932,13 @@ function SettingsPanel() {
           <h1 className="text-2xl font-bold tracking-tight text-neutral-900">
             Configurations & Setup
           </h1>
-          <Button
-            variant="outline"
-            className="flex items-center gap-2 text-blue-600 border-blue-200 hover:bg-blue-50/50"
-            asChild
+          <a
+            href="/seatalk-bot-structure.md"
+            download="seatalk-bot-structure.md"
+            className="inline-flex items-center justify-center gap-2 rounded-xl text-sm font-semibold h-10 px-4 text-blue-600 border border-blue-200 hover:bg-blue-50/50 bg-white transition-all shadow-sm"
           >
-            <a href="/seatalk-bot-structure.md" download="seatalk-bot-structure.md">
-              <Download size={16} /> Download Full Code Dump
-            </a>
-          </Button>
+            <Download size={16} /> Download Full Code Dump
+          </a>
         </div>
 
         <Card className="mb-6">
@@ -3068,6 +3156,664 @@ function SettingsPanel() {
             </ul>
           </CardContent>
         </Card>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// --- Scheduler & Announcement Broadcasts ---
+// ============================================================================
+function BroadcastsScheduler() {
+  const [broadcasts, setBroadcasts] = useState<any[]>([]);
+  const [isAddOpen, setIsAddOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [interval, setIntervalVal] = useState("every_5_minutes");
+  const [chatType, setChatType] = useState("private");
+  const [targetId, setTargetId] = useState("");
+  const [msgType, setMsgType] = useState("text"); 
+  const [content, setContent] = useState("");
+  const [interactiveJson, setInteractiveJson] = useState(`{
+  "title": "Scheduled Notification",
+  "description": "This is a scheduled push alert. Click to take action.",
+  "elements": [
+    {
+      "element_type": "button",
+      "button": {
+        "text": "Open Dashboard",
+        "value": "open_dashboard",
+        "type": "redirect",
+        "url_redirect": {
+          "url": "https://ai.studio/build"
+        }
+      }
+    }
+  ]
+}`);
+
+  useEffect(() => {
+    try {
+      const q = query(collection(db, "broadcasts"), orderBy("created_at", "desc"));
+      const unsub = onSnapshot(q, (snap) => {
+        setBroadcasts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      });
+      return () => unsub();
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  const handleAddBroadcast = async () => {
+    if (!name || !targetId || (msgType === "text" && !content)) {
+      toast.error("Please fill in all required fields.");
+      return;
+    }
+    try {
+      await addDoc(collection(db, "broadcasts"), {
+        name,
+        interval,
+        chat_type: chatType,
+        target_id: targetId,
+        msg_type: msgType,
+        content: msgType === "text" ? content : interactiveJson,
+        is_active: true,
+        last_run_at: "",
+        created_at: new Date().toISOString()
+      });
+      setIsAddOpen(false);
+      setName("");
+      setTargetId("");
+      setContent("");
+      toast.success("Broadcast Scheduled Successfully!");
+    } catch (err) {
+      toast.error("Failed to schedule broadcast.");
+    }
+  };
+
+  const handleDeleteBroadcast = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, "broadcasts", id));
+      toast.success("Broadcast deleted");
+    } catch (e) {
+      toast.error("Failed to delete broadcast");
+    }
+  };
+
+  const handleRunImmediately = async (b: any) => {
+    const loader = toast.loading(`Triggering transmission for "${b.name}"...`);
+    try {
+      let payloadObj: any = undefined;
+      if (b.msg_type === "interactive") {
+        try {
+          payloadObj = JSON.parse(b.content);
+        } catch (e) {
+          toast.dismiss(loader);
+          toast.error("JSON formatting error in Card payload.");
+          return;
+        }
+      }
+
+      const res = await fetch(`${WORKER_URL}/api/dashboard/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_type: b.chat_type,
+          target_id: b.target_id,
+          content: b.msg_type === "text" ? b.content : "Scheduled Interactive Message Card dispatch",
+          message_obj: payloadObj
+        })
+      });
+      if (res.ok) {
+        const timeFormatted = new Date().toLocaleTimeString("en-US", { timeZone: "Asia/Manila" }) + " (Asia/Manila)";
+        await updateDoc(doc(db, "broadcasts", b.id), {
+          last_run_at: timeFormatted
+        });
+        toast.dismiss(loader);
+        toast.success(`Broadcast "${b.name}" successfully transmitted!`);
+      } else {
+        throw new Error();
+      }
+    } catch (err) {
+      toast.dismiss(loader);
+      toast.error("Transmission failed. Cloudflare Worker might be offline or target ID invalid.");
+    }
+  };
+
+  return (
+    <div className="h-full overflow-y-auto p-6 md:p-10 bg-neutral-50/50">
+      <div className="max-w-4xl mx-auto">
+        <div className="flex justify-between items-center mb-8">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-neutral-900 mb-1 flex items-center gap-2 font-semibold">
+              <Clock className="text-blue-600" size={24} />
+              Scheduler & Announcements
+            </h1>
+            <p className="text-sm text-neutral-500">
+              Schedule recurring notifications, announcements, or interactive alerts to groups or direct chats.
+            </p>
+          </div>
+          <Button className="gap-2 bg-blue-600 font-semibold" onClick={() => setIsAddOpen(true)}>
+            <Plus size={16} /> New Broadcast
+          </Button>
+
+          <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
+            <DialogContent className="max-w-xl">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Clock className="text-blue-600 hover:scale-110 transition shrink-0" size={20} />
+                  Schedule New Announcement
+                </DialogTitle>
+              </DialogHeader>
+              <div className="flex flex-col gap-4 py-4 max-h-[70vh] overflow-y-auto">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-neutral-600">Task Name</label>
+                  <Input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="e.g. Daily Standup Check-in"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-neutral-600">Interval Frequency</label>
+                    <Select value={interval} onValueChange={setIntervalVal}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="every_5_minutes">Every 5 Minutes (Dev Mode)</SelectItem>
+                        <SelectItem value="hourly">Hourly (Top of hour)</SelectItem>
+                        <SelectItem value="daily">Daily at 9:00 AM (APAC)</SelectItem>
+                        <SelectItem value="weekly">Weekly on Mondays</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-neutral-600">Target Type</label>
+                    <Select value={chatType} onValueChange={setChatType}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="private">Direct Message (User)</SelectItem>
+                        <SelectItem value="group">Group Chat ID</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-neutral-600">
+                    {chatType === "private" ? "Recipient Employee Code / Email" : "Recipient Group Chat ID"}
+                  </label>
+                  <Input
+                    value={targetId}
+                    onChange={(e) => setTargetId(e.target.value)}
+                    placeholder={chatType === "private" ? "e_ptv9p1zy or account@domain.com" : "e.g. g_1234567891"}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-neutral-600">Message Type</label>
+                  <Select value={msgType} onValueChange={setMsgType}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="text">Plain Text / Markdown Link</SelectItem>
+                      <SelectItem value="interactive">SeaTalk Interactive Message Card (JSON)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {msgType === "text" ? (
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-neutral-600">Message Text Content</label>
+                    <Textarea
+                      value={content}
+                      onChange={(e) => setContent(e.target.value)}
+                      rows={4}
+                      placeholder="Type the broadcast message... Markdown list support is provided."
+                    />
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-neutral-600">Interactive JSON Configuration</label>
+                    <Textarea
+                      value={interactiveJson}
+                      onChange={(e) => setInteractiveJson(e.target.value)}
+                      rows={8}
+                      className="font-mono text-xs text-neutral-800 bg-neutral-900 border border-neutral-800 text-green-400 p-3 rounded-lg"
+                    />
+                  </div>
+                )}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsAddOpen(false)}>
+                  Cancel
+                </Button>
+                <Button className="bg-blue-600 font-bold" onClick={handleAddBroadcast}>
+                  Schedule Broadcast
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4">
+          {broadcasts.length === 0 ? (
+            <Card className="border-dashed border-2 shadow-none bg-transparent">
+              <CardContent className="flex flex-col items-center justify-center p-12 text-center">
+                <Clock className="h-12 w-12 text-neutral-300 mb-4 animate-pulse" />
+                <h3 className="font-medium text-neutral-900 mb-1">
+                  No broadcasts scheduled
+                </h3>
+                <p className="text-sm text-neutral-500 mb-4">
+                  Define automated periodic transmissions or emergency notifications to coordinate with your employees.
+                </p>
+                <Button variant="outline" onClick={() => setIsAddOpen(true)}>
+                  Create background broadcast task
+                </Button>
+              </CardContent>
+            </Card>
+          ) : (
+            broadcasts.map((b) => (
+              <Card key={b.id} className="overflow-hidden shadow-sm hover:shadow-md transition duration-200">
+                <div className="p-5 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+                  <div className="space-y-1 sm:space-y-2 flex-1">
+                    <div className="flex flex-wrap gap-2 items-center">
+                      <h3 className="text-base font-bold text-neutral-900">{b.name}</h3>
+                      <Badge className="bg-neutral-100 text-neutral-700 capitalize">
+                        🕒 {b.interval.replace(/_/g, " ")}
+                      </Badge>
+                      <Badge className={cn(
+                        "font-mono text-[10px]",
+                        b.chat_type === "private" ? "bg-cyan-50 text-cyan-800 border-cyan-100" : "bg-emerald-50 text-emerald-800 border-emerald-100"
+                      )}>
+                        {b.chat_type === "private" ? "👤 DM" : "👥 Group ID"}
+                      </Badge>
+                    </div>
+                    <div className="text-xs text-neutral-500 font-mono">
+                      Target: <span className="text-neutral-700 font-semibold">{b.target_id}</span>
+                    </div>
+                    <p className="text-xs text-neutral-600 whitespace-nowrap overflow-hidden text-ellipsis max-w-lg bg-neutral-50 px-2.5 py-1.5 rounded-md border border-neutral-100 font-mono">
+                      {b.content}
+                    </p>
+                    <div className="text-[10px] text-neutral-400 font-medium">
+                      Last Dispatch Date: {b.last_run_at ? <span className="text-green-600 font-bold">{b.last_run_at}</span> : "Never dispatched"}
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <Button 
+                      onClick={() => handleRunImmediately(b)} 
+                      size="sm" 
+                      className="border border-indigo-200 text-indigo-600 hover:bg-indigo-50 font-semibold flex items-center gap-1.5 cursor-pointer animate-fadeIn"
+                      variant="outline"
+                    >
+                      Trigger Now
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-red-500 hover:text-red-700 hover:bg-red-50 shrink-0 cursor-pointer"
+                      onClick={() => handleDeleteBroadcast(b.id)}
+                    >
+                      <Trash2 size={16} />
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// --- Workplace WebApp SDK Simulator ---
+// ============================================================================
+function WorkplacePlayground() {
+  const [activeCall, setActiveCall] = useState("email");
+  const [consoleOutput, setConsoleOutput] = useState("");
+  const [isLoader, setIsLoader] = useState(false);
+  const [screenOverlay, setScreenOverlay] = useState<string | null>(null);
+  
+  // Custom configurations
+  const [custEmail, setCustEmail] = useState("jcruspero3263@gmail.com");
+  const [custNickname, setCustNickname] = useState("Jonathan Cruspero");
+  const [toastText, setToastText] = useState("Action successfully completed!");
+  const [groupTarget, setGroupTarget] = useState("g_552194883");
+
+  // Mock SDK details
+  const sdkSpecs: Record<string, { desc: string; script: string; response: any; anim: string }> = {
+    email: {
+      desc: "Retrieves the primary verified email of the current SeaTalk subscriber. Avoids standard @seatalk.biz formats and displays user's real corporate handle.",
+      script: `seatalk.ready(function() {
+  seatalk.getEmployeeEmail({
+    success: function(res) {
+      console.log("Verified Email:", res.email);
+    },
+    fail: function(err) {
+      console.error("SDK Call Exception", err);
+    }
+  });
+});`,
+      response: {
+        code: 0,
+        message: "success",
+        data: {
+          email: "jcruspero3263@gmail.com",
+          auth_source: "active_directory"
+        }
+      },
+      anim: "profile"
+    },
+    profile: {
+      desc: "Fetches full Workplace employee user credentials, department mapping, position strings, and employee identifier codes.",
+      script: `seatalk.getEmployeeInfo({
+  success: function(res) {
+    /* Handle profile response */
+    showWorkspaceWelcome(res.nickname, res.employee_code);
+  }
+});`,
+      response: {
+        code: 0,
+        message: "success",
+        data: {
+          employee_code: "e_ptv9p1zy",
+          nickname: "Jonathan Cruspero",
+          name_en: "Jonathan Cruspero",
+          department: "Asia Engineering & Operations",
+          workplace_region: "PH"
+        }
+      },
+      anim: "card"
+    },
+    openchat: {
+      desc: "Native Workspace redirect. Automatically routes individual client to targeted direct chat, department, or bot conversations.",
+      script: `seatalk.openChat({
+  target_id: "g_552194883",
+  chat_type: "group", 
+  success: function() {
+    console.log("Chat redirection launched successfully.");
+  }
+});`,
+      response: {
+        code: 0,
+        message: "redirected"
+      },
+      anim: "chat"
+    },
+    toast: {
+      desc: "Triggers SeaTalk client's lightweight native status dialog. High performance visual cues with zero viewport blocking.",
+      script: `seatalk.showToast({
+  message: "Action successfully completed!",
+  duration: 2000, // miliseconds
+  type: "success" // choices: success / warning / error
+});`,
+      response: {
+        code: 0,
+        message: "toast_rendered_ok"
+      },
+      anim: "toast"
+    }
+  };
+
+  const handleSimulate = (key: string) => {
+    setIsLoader(true);
+    setScreenOverlay(null);
+    setConsoleOutput("// Initializing Bridge Connection...");
+    
+    setTimeout(() => {
+      setIsLoader(false);
+      setActiveCall(key);
+      const spec = sdkSpecs[key];
+      
+      // Update dynamic parts
+      const resp = { ...spec.response };
+      if (key === "email") {
+        resp.data = { ...resp.data, email: custEmail };
+      }
+      if (key === "profile") {
+        resp.data = { ...resp.data, nickname: custNickname, name_en: custNickname };
+      }
+      if (key === "toast") {
+        // trigger animation toast
+        setScreenOverlay(`toast:${toastText}`);
+      } else if (key === "openchat") {
+        setScreenOverlay(`chat:${groupTarget}`);
+      } else {
+        setScreenOverlay(key);
+      }
+      
+      setConsoleOutput(JSON.stringify(resp, null, 2));
+    }, 850);
+  };
+
+  return (
+    <div className="h-full overflow-y-auto p-6 md:p-10 bg-neutral-50/50">
+      <div className="max-w-6xl mx-auto">
+        <div className="mb-8">
+          <h1 className="text-2xl font-bold tracking-tight text-neutral-900 mb-1 flex items-center gap-2">
+            <Terminal className="text-blue-600 animate-pulse" size={24} />
+            Workplace App Sandbox & JS SDK Playground
+          </h1>
+          <p className="text-sm text-neutral-500">
+            Interactive visual simulation of SeaTalk's Client JS Bridge API. Test and trace behavior showcased in the <strong>seatalk-io/web-app-sdk-example</strong> organization repo.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          {/* Controls list & code specs */}
+          <div className="lg:col-span-7 space-y-6">
+            <Card className="shadow-sm">
+              <CardHeader className="py-4">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <Blocks size={16} className="text-indigo-600" />
+                  Select Workplace SDK Client Call
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <Button
+                    onClick={() => handleSimulate("email")}
+                    variant={activeCall === "email" ? "default" : "outline"}
+                    className={cn(
+                      "font-semibold gap-1.5 h-10 rounded-xl justify-start px-3 cursor-pointer",
+                      activeCall === "email" ? "bg-indigo-600 hover:bg-indigo-700 text-white font-bold" : ""
+                    )}
+                  >
+                    👤 seatalk.getEmployeeEmail()
+                  </Button>
+                  <Button
+                    onClick={() => handleSimulate("profile")}
+                    variant={activeCall === "profile" ? "default" : "outline"}
+                    className={cn(
+                      "font-semibold gap-1.5 h-10 rounded-xl justify-start px-3 cursor-pointer",
+                      activeCall === "profile" ? "bg-indigo-600 hover:bg-indigo-700 text-white font-bold" : ""
+                    )}
+                  >
+                    💼 seatalk.getEmployeeInfo()
+                  </Button>
+                  <Button
+                    onClick={() => handleSimulate("openchat")}
+                    variant={activeCall === "openchat" ? "default" : "outline"}
+                    className={cn(
+                      "font-semibold gap-1.5 h-10 rounded-xl justify-start px-3 cursor-pointer",
+                      activeCall === "openchat" ? "bg-indigo-600 hover:bg-indigo-700 text-white font-bold" : ""
+                    )}
+                  >
+                    💬 seatalk.openChat()
+                  </Button>
+                  <Button
+                    onClick={() => handleSimulate("toast")}
+                    variant={activeCall === "toast" ? "default" : "outline"}
+                    className={cn(
+                      "font-semibold gap-1.5 h-10 rounded-xl justify-start px-3 cursor-pointer",
+                      activeCall === "toast" ? "bg-indigo-600 hover:bg-indigo-700 text-white font-bold" : ""
+                    )}
+                  >
+                    🛎️ seatalk.showToast()
+                  </Button>
+                </div>
+
+                <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-lg text-xs leading-relaxed text-indigo-800">
+                  {sdkSpecs[activeCall]?.desc}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Custom Input controls */}
+            <Card className="shadow-sm">
+              <CardHeader className="py-4">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <Settings size={16} className="text-neutral-500" />
+                  Customize Sandbox Values
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {activeCall === "email" && (
+                  <div className="space-y-1 col-span-2">
+                    <label className="text-[11px] font-bold text-neutral-500">Return Email Response</label>
+                    <Input value={custEmail} onChange={(e) => setCustEmail(e.target.value)} className="text-xs font-mono" />
+                  </div>
+                )}
+                {activeCall === "profile" && (
+                  <div className="space-y-1 col-span-2">
+                    <label className="text-[11px] font-bold text-neutral-500">Employee Nickname Response</label>
+                    <Input value={custNickname} onChange={(e) => setCustNickname(e.target.value)} className="text-xs font-mono" />
+                  </div>
+                )}
+                {activeCall === "openchat" && (
+                  <div className="space-y-1 col-span-2">
+                    <label className="text-[11px] font-bold text-neutral-500">Open Chat Target ID</label>
+                    <Input value={groupTarget} onChange={(e) => setGroupTarget(e.target.value)} className="text-xs font-mono" />
+                  </div>
+                )}
+                {activeCall === "toast" && (
+                  <div className="space-y-1 col-span-2">
+                    <label className="text-[11px] font-bold text-neutral-500">Toast Message Text</label>
+                    <Input value={toastText} onChange={(e) => setToastText(e.target.value)} className="text-xs font-mono" />
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Code Snippet */}
+            <Card className="shadow-sm overflow-hidden bg-neutral-900 border-neutral-800">
+              <div className="px-4 py-3 bg-neutral-950 border-b border-neutral-900 text-xs font-semibold text-neutral-300 flex justify-between items-center font-mono">
+                <span>SDK Code Example (Web-App JS Engine)</span>
+                <span className="text-[10px] bg-neutral-800 text-neutral-400 px-2 py-0.5 rounded font-bold">javascript</span>
+              </div>
+              <CardContent className="p-0">
+                <pre className="p-4 overflow-x-auto text-[11px] font-mono leading-relaxed text-green-400 font-semibold whitespace-pre-wrap">
+                  {sdkSpecs[activeCall]?.script}
+                </pre>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Right column: Sandbox emulation viewport & Console */}
+          <div className="lg:col-span-5 space-y-6 flex flex-col">
+            {/* Viewport Frame */}
+            <div className="bg-neutral-900 rounded-3xl p-4 border-4 border-neutral-800 shadow-xl flex-1 flex flex-col justify-between aspect-[10/16] max-h-[580px] min-h-[480px] max-w-sm mx-auto w-full relative overflow-hidden">
+              {/* Phone ear speaker */}
+              <div className="w-16 h-4 bg-neutral-800 rounded-full mx-auto my-1 flex justify-center items-center">
+                <div className="w-6 h-1 bg-neutral-950 rounded-full" />
+              </div>
+              
+              {/* Screenspace */}
+              <div className="bg-white flex-1 rounded-2xl flex flex-col relative overflow-hidden mt-3 shadow-inner border border-neutral-300/40">
+                {/* Simulated App Header */}
+                <div className="h-10 bg-indigo-600 text-white font-bold flex items-center justify-between px-3 text-xs shrink-0 select-none">
+                  <span>Workplace Embedded App</span>
+                  <div className="flex gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-red-400" />
+                    <div className="w-2 h-2 rounded-full bg-green-400" />
+                  </div>
+                </div>
+
+                {/* Simulated Content Screen */}
+                <div className="flex-1 p-4 bg-neutral-50 flex flex-col justify-between text-neutral-700 relative">
+                  <div className="space-y-4">
+                    <div className="text-center font-bold text-xs text-indigo-800 flex justify-center items-center gap-1">
+                      <Bot size={14} /> SeaTalk Interactive Terminal
+                    </div>
+
+                    <div className="bg-white p-3 rounded-xl border border-neutral-100 shadow-sm space-y-2 text-[11px]">
+                      <div className="font-semibold text-neutral-800">Connection Status:</div>
+                      <div className="flex items-center gap-1 text-green-600 font-bold">
+                        <span className="w-2 h-2 rounded-full bg-green-500 animate-ping inline-block shrink-0" />
+                        Online inside Workplace Client
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Simulator Animation Rendering Block */}
+                  <div className="absolute inset-x-4 top-24 bottom-4 flex items-center justify-center pointer-events-none">
+                    {isLoader ? (
+                      <div className="p-3 bg-neutral-900/80 rounded-xl flex items-center justify-center gap-2 text-xs text-white z-20">
+                        <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4m2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        Bridge Requesting...
+                      </div>
+                    ) : (
+                      <>
+                        {screenOverlay === "email" && (
+                          <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-center text-xs space-y-1">
+                            <div className="font-bold text-indigo-900">Email Retrieved</div>
+                            <div className="font-mono text-[10px] text-indigo-700">{custEmail}</div>
+                          </motion.div>
+                        )}
+                        {screenOverlay === "profile" && (
+                          <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-center text-xs space-y-1">
+                            <div className="font-bold text-emerald-900">Enterprise Profile Verified</div>
+                            <div className="font-mono text-[10px] text-emerald-700">{custNickname}</div>
+                            <div className="text-[9px] text-neutral-400">Position: Software Architect</div>
+                          </motion.div>
+                        )}
+                        {screenOverlay?.startsWith("toast:") && (
+                          <motion.div initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ type: "spring" }} className="bg-neutral-900 text-white rounded-lg px-3 py-1.5 text-[11px] font-medium shadow-md flex items-center gap-1 z-10 select-none">
+                            🛎️ {screenOverlay.replace("toast:", "")}
+                          </motion.div>
+                        )}
+                        {screenOverlay?.startsWith("chat:") && (
+                          <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-indigo-600 text-white rounded-xl p-3 text-center text-[11px] space-y-2 z-10">
+                            <div className="font-bold">Redirecting Client view...</div>
+                            <div className="text-[9px] bg-indigo-900/40 p-1.5 rounded font-mono break-all text-indigo-200">
+                              Target Chat: {screenOverlay.replace("chat:", "")}
+                            </div>
+                          </motion.div>
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  <div className="text-[10px] text-neutral-400 text-center uppercase font-mono tracking-wider">
+                    Powered by Workplace SDK
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Simulated Debug Console */}
+            <div className="bg-black text-green-400 font-mono text-xs rounded-2xl p-4 overflow-hidden border border-neutral-800 flex flex-col justify-end min-h-[140px]">
+              <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-2 font-bold border-b border-neutral-950 pb-1 flex justify-between font-mono">
+                <span>SDK Payload Console</span>
+                <span className="text-green-500 font-bold text-[8px] animate-pulse">● RUNNING</span>
+              </div>
+              <pre className="overflow-y-auto max-h-[120px] scrollbar-thin text-[10px] leading-relaxed font-mono whitespace-pre-wrap">
+                {consoleOutput || `// Click any "Simulate" option above to execute JavaScript SDK call inside workplace app simulator sandbox.`}
+              </pre>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

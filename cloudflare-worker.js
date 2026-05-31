@@ -265,11 +265,12 @@ async function getMessageByMessageId(env, messageId) {
 }
 
 // --- Auto Reply Logic with Firestore ---
-async function findMatchingRule(env, messageText) {
+async function findMatchingRule(env, messageText, senderEmail = "", employeeCode = "", chatType = "private") {
   const rules = await firestoreRequest(env, "GET", "/rules");
   if (!rules || !rules.documents) return null;
 
-  const lowerMsg = messageText.toLowerCase();
+  const lowerMsg = messageText.toString().trim();
+  const lowerMsgComp = lowerMsg.toLowerCase();
 
   for (const doc of rules.documents) {
     const rule = doc.fields;
@@ -278,19 +279,45 @@ async function findMatchingRule(env, messageText) {
       rule.is_active.booleanValue === true &&
       rule.trigger_type.stringValue === "keyword"
     ) {
+      // Permission Validation Check
+      const permType = rule.permission_type?.stringValue || "everyone";
+      if (permType === "group_admin") {
+         if (chatType !== "group") {
+           continue; 
+         }
+      } else if (permType === "specific_emails") {
+         const allowedStr = rule.allowed_emails?.stringValue || "";
+         if (allowedStr) {
+           const allowed = allowedStr.split(",").map(e => e.trim().toLowerCase());
+           const senderLower = (senderEmail || "").toLowerCase();
+           if (!senderLower || !allowed.includes(senderLower)) {
+              continue; 
+           }
+         }
+      }
+
       const keywordsStr = rule.keywords.stringValue;
       let keywords = [];
       try {
         keywords = JSON.parse(keywordsStr);
       } catch (e) {}
 
-      const matchType = rule.match_type.stringValue;
+      const matchType = rule.match_type?.stringValue || "contains";
 
       const matched = keywords.some((kw) => {
         const lowerKw = kw.toLowerCase();
-        if (matchType === "exact") return lowerMsg === lowerKw;
-        if (matchType === "starts_with") return lowerMsg.startsWith(lowerKw);
-        return lowerMsg.includes(lowerKw); // default contains
+        if (matchType === "exact") return lowerMsgComp === lowerKw;
+        if (matchType === "starts_with") return lowerMsgComp.startsWith(lowerKw);
+        if (matchType === "ends_with") return lowerMsgComp.endsWith(lowerKw);
+        if (matchType === "regex") {
+          try {
+            const regex = new RegExp(kw, "i");
+            return regex.test(lowerMsg);
+          } catch (regErr) {
+            return false;
+          }
+        }
+        return lowerMsgComp.includes(lowerKw); // default contains
       });
 
       if (matched) return rule.reply_message.stringValue;
@@ -331,13 +358,13 @@ async function getEmployeeProfile(env, employeeCode) {
     "e_ppkznbk3": { email: "segagt497@shopeemobile-external.com" }
   };
 
-  let defaultEmail = employeeCode ? `${employeeCode}@seatalk.biz` : "";
+  let defaultEmail = "";
 
   if (manualOverrides[employeeCode]) {
     defaultEmail = manualOverrides[employeeCode].email;
   }
 
-  const result = { name: defaultEmail, email: defaultEmail, nickname: defaultEmail };
+  const result = { name: defaultEmail || employeeCode, email: defaultEmail, nickname: defaultEmail || employeeCode };
   try {
     const token = await getAccessToken(env);
     const res = await fetch(
@@ -354,8 +381,8 @@ async function getEmployeeProfile(env, employeeCode) {
       if (data.code === 0 && data.employees && data.employees.length > 0) {
         const emp = data.employees[0];
         result.email = emp.company_email || emp.email || defaultEmail;
-        result.name = result.email;
-        result.nickname = result.email;
+        result.name = emp.en_name || emp.name || result.email;
+        result.nickname = emp.en_name || emp.name || result.email;
       }
     }
   } catch (e) {
@@ -540,12 +567,16 @@ export default {
         // 3. Batch fetch employee profiles
         const uniqueEmp = [];
         let codesArr = Array.from(empCodesToFetch);
-        if (codesArr.length > 50) codesArr = codesArr.slice(0, 50);
 
         if (codesArr.length > 0) {
-          const profiles = await Promise.all(
-            codesArr.map((c) => getEmployeeProfile(env, c))
-          );
+          const profiles = [];
+          for (let b = 0; b < codesArr.length; b += 50) {
+             const batch = codesArr.slice(b, b + 50);
+             const batchProfiles = await Promise.all(
+               batch.map((c) => getEmployeeProfile(env, c))
+             );
+             profiles.push(...batchProfiles);
+          }
           
           for (let i = 0; i < codesArr.length; i++) {
             const code = codesArr[i];
@@ -558,7 +589,7 @@ export default {
                  email = convInfo.email;
                }
             }
-            if (!email) email = code ? `${code}@seatalk.biz` : "";
+            if (!email) email = "";
             
             let name = p.name;
             if (convInfo?.name && (!name || name === code || name.startsWith("e_"))) {
@@ -602,6 +633,29 @@ export default {
         } catch (e) {
           return new Response("Error proxying file", { status: 500, headers: corsHeaders });
         }
+      }
+
+      if (url.pathname === "/api/dashboard/ensure_conversation" && request.method === "POST") {
+        const bodyText = await request.text();
+        let body;
+        try {
+          body = JSON.parse(bodyText);
+        } catch {
+          body = {};
+        }
+
+        let convId = await ensureConversation(env, {
+          chat_type: body.chat_type,
+          employee_code: body.employee_code || "",
+          user_name: body.user_name || "",
+          user_email: body.user_email || "",
+          group_id: body.group_id || "",
+          group_name: body.group_name || "",
+        });
+
+        return new Response(JSON.stringify({ success: true, conversation_id: convId }), {
+          headers: { "Content-Type": "application/json", ...corsHeaders }
+        });
       }
 
       // Endpoint for React App to send messages OUT using the Cloudflare Worker
@@ -793,7 +847,7 @@ export default {
                 raw_message: JSON.stringify(event.message || {})
               });
 
-              const reply = await findMatchingRule(env, content);
+              const reply = await findMatchingRule(env, content, senderEmail, event.employee_code, "private");
               if (reply) {
                 await logEvent(env, "info", "Sending auto-reply", {
                   employeeCode: event.employee_code,
@@ -864,7 +918,7 @@ export default {
                 raw_message: JSON.stringify(event.message || {})
               });
 
-              const reply = await findMatchingRule(env, content);
+              const reply = await findMatchingRule(env, content, senderEmail, event.employee_code, "group");
               if (reply) {
                 await logEvent(env, "info", "Sending group auto-reply", {
                   groupId: event.group_id,
