@@ -461,9 +461,112 @@ async function getEmployeeProfile(env, employeeCode) {
   return result;
 }
 
+function parseReplyMessage(reply) {
+  if (!reply) return { text: "", messageObj: undefined };
+  let messageObj = undefined;
+  let text = reply;
+  try {
+    const trimmed = reply.trim();
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && parsed.tag) {
+        messageObj = parsed;
+        if (parsed.tag === "interactive_message") {
+          text = "[Interactive Message]";
+        } else if (parsed.tag === "image") {
+          text = "[Image]";
+        } else if (parsed.tag === "file") {
+          text = `[File: ${parsed.file?.filename || "Uploaded file"}]`;
+        } else if (parsed.tag === "markdown") {
+          text = parsed.markdown?.content || "[Markdown]";
+        } else if (parsed.tag === "text") {
+          text = parsed.text?.content || reply;
+        } else {
+          text = `[${parsed.tag.toUpperCase()} Message]`;
+        }
+      } else if (parsed && parsed.interactive_message) {
+        messageObj = { tag: "interactive_message", ...parsed };
+        text = "[Interactive Message]";
+      }
+    }
+  } catch (e) {}
+  return { text, messageObj };
+}
+
+function processMessageMentions(messageObj) {
+  if (!messageObj) return messageObj;
+  const messageData = JSON.parse(JSON.stringify(messageObj));
+
+  if (messageData.tag === "text" && messageData.text) {
+    let content = messageData.text.content || "";
+    const emails = messageData.text.mentioned_email_list || [];
+    let atAll = messageData.text.at_all || false;
+
+    const mentionRegex = /<mention\s+email=["']([^"']+)["']>\s*<\/mention>/gi;
+    let match;
+    while ((match = mentionRegex.exec(content)) !== null) {
+      if (!emails.includes(match[1])) {
+        emails.push(match[1]);
+      }
+    }
+
+    content = content.replace(mentionRegex, (m, email) => {
+      const name = email.split("@")[0];
+      return `@${name}`;
+    });
+
+    const atAllRegex = /<mention>\s*<\/mention>/gi;
+    if (atAllRegex.test(content)) {
+      atAll = true;
+      content = content.replace(atAllRegex, "@all");
+    }
+
+    messageData.text.content = content;
+    if (emails.length > 0) {
+      messageData.text.mentioned_email_list = emails;
+    }
+    if (atAll) {
+      messageData.text.at_all = true;
+    }
+  } else if (messageData.tag === "markdown" && messageData.markdown) {
+    let content = messageData.markdown.content || "";
+    const emails = messageData.markdown.mentioned_email_list || [];
+    let atAll = messageData.markdown.at_all || false;
+
+    const mentionRegex = /<mention\s+email=["']([^"']+)["']>\s*<\/mention>/gi;
+    let match;
+    while ((match = mentionRegex.exec(content)) !== null) {
+      if (!emails.includes(match[1])) {
+        emails.push(match[1]);
+      }
+    }
+
+    content = content.replace(mentionRegex, (m, email) => {
+      const name = email.split("@")[0];
+      return `@${name}`;
+    });
+
+    const atAllRegex = /<mention>\s*<\/mention>/gi;
+    if (atAllRegex.test(content)) {
+      atAll = true;
+      content = content.replace(atAllRegex, "@all");
+    }
+
+    messageData.markdown.content = content;
+    if (emails.length > 0) {
+      messageData.markdown.mentioned_email_list = emails;
+    }
+    if (atAll) {
+      messageData.markdown.at_all = true;
+    }
+  }
+  return messageData;
+}
+
 async function sendPrivateMessage(env, employeeCode, text, messageObj, threadId) {
   const token = await getAccessToken(env);
-  const messageData = messageObj ? messageObj : { tag: "text", text: { format: 1, content: text } };
+  let messageData = messageObj ? messageObj : { tag: "text", text: { format: 1, content: text } };
+  messageData = processMessageMentions(messageData);
   if (threadId) {
     messageData.thread_id = threadId;
     messageData.quoted_message_id = threadId; 
@@ -501,7 +604,8 @@ async function sendPrivateMessage(env, employeeCode, text, messageObj, threadId)
 
 async function sendGroupMessage(env, groupId, text, threadId, messageObj) {
   const token = await getAccessToken(env);
-  const messageData = messageObj ? messageObj : { tag: "text", text: { format: 1, content: text } };
+  let messageData = messageObj ? messageObj : { tag: "text", text: { format: 1, content: text } };
+  messageData = processMessageMentions(messageData);
   if (threadId) {
     messageData.thread_id = threadId;
     messageData.quoted_message_id = threadId; 
@@ -550,6 +654,123 @@ async function sendGroupMessage(env, groupId, text, threadId, messageObj) {
     throw new Error(
       `SeaTalk API Error: ${data.message || JSON.stringify(data)}`,
     );
+  }
+}
+
+// --- Scheduled Broadcasts Handler for Cron Trigger ---
+async function runScheduledBroadcasts(env) {
+  try {
+    await logEvent(env, "info", "Cron broadcast check started", {});
+
+    const broadcastsRes = await firestoreRequest(env, "GET", "/broadcasts");
+    if (!broadcastsRes || !broadcastsRes.documents) {
+      await logEvent(env, "info", "Cron broadcast check: No broadcasts found or error fetching", {});
+      return;
+    }
+
+    const utcNow = Date.now();
+    const manilaOffsetMs = 8 * 60 * 60 * 1000;
+    const manilaDate = new Date(utcNow + manilaOffsetMs);
+
+    const manilaHours = manilaDate.getUTCHours();
+    const manilaMinutes = manilaDate.getUTCMinutes();
+    const dayIndex = manilaDate.getUTCDay();
+
+    const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const currentDayName = DAYS[dayIndex];
+    const currentHHMM = `${manilaHours.toString().padStart(2, '0')}:${manilaMinutes.toString().padStart(2, '0')}`;
+    const currentYYYYMMDD = `${manilaDate.getUTCFullYear()}-${(manilaDate.getUTCMonth() + 1).toString().padStart(2, '0')}-${manilaDate.getUTCDate().toString().padStart(2, '0')}`;
+
+    console.log(`Cron check time: ${currentHHMM} on ${currentDayName}, date: ${currentYYYYMMDD}`);
+
+    for (const doc of broadcastsRes.documents) {
+      const fields = doc.fields;
+      if (!fields) continue;
+
+      const isActive = fields.is_active && fields.is_active.booleanValue === true;
+      if (!isActive) continue;
+
+      const name = fields.name?.stringValue || "Unnamed Broadcast";
+      const interval = fields.interval?.stringValue || "manual_time";
+      const chatType = fields.chat_type?.stringValue || "private";
+      const targetId = fields.target_id?.stringValue || "";
+      const msgType = fields.msg_type?.stringValue || "text";
+      const content = fields.content?.stringValue || "";
+      const scheduledTime = fields.scheduled_time?.stringValue || "";
+      const scheduledDate = fields.scheduled_date?.stringValue || "";
+      const lastRunAt = fields.last_run_at?.stringValue || "";
+
+      let matches = false;
+
+      if (interval === "manual_time") {
+        matches = (scheduledTime === currentHHMM);
+      } else if (interval === "weekly") {
+        const parts = scheduledDate.split("T");
+        const schedDay = parts[0] || "";
+        const schedTime = parts[1] || "";
+        matches = (schedDay === currentDayName && schedTime === currentHHMM);
+      }
+
+      if (matches) {
+        // Double-run prevention (same minute run)
+        if (lastRunAt && lastRunAt.includes(currentYYYYMMDD) && lastRunAt.includes(currentHHMM)) {
+          console.log(`Broadcast "${name}" already executed in this minute. Skipping.`);
+          continue;
+        }
+
+        console.log(`Triggering broadcast: ${name} to ${targetId}`);
+        await logEvent(env, "info", `Triggering broadcast: ${name}`, { targetId, interval });
+
+        let responseOk = false;
+        let responseError = null;
+
+        try {
+          const { text: replyText, messageObj } = parseReplyMessage(content);
+
+          if (chatType === "private") {
+            const actualEmployeeCode = await resolveEmployeeCode(env, targetId);
+            await sendPrivateMessage(env, actualEmployeeCode, replyText, messageObj);
+          } else {
+            await sendGroupMessage(env, targetId, replyText, undefined, messageObj);
+          }
+          responseOk = true;
+        } catch (sendErr) {
+          responseError = sendErr.message;
+          console.error(`Broadcast ${name} send error:`, sendErr);
+        }
+
+        // Update last_run_at
+        const elapsedMsg = responseOk 
+          ? `${currentHHMM} on ${currentYYYYMMDD} (Asia/Manila)`
+          : `Failed on ${currentYYYYMMDD} at ${currentHHMM}: ${responseError}`;
+
+        const nameParts = doc.name.split("/");
+        const bId = nameParts[nameParts.length - 1];
+        const docPath = `/broadcasts/${bId}`;
+
+        try {
+          await firestoreRequest(env, "PATCH", `${docPath}?updateMask.fieldPaths=last_run_at`, {
+            fields: {
+              last_run_at: { stringValue: elapsedMsg }
+            }
+          });
+          console.log(`Updated last_run_at for ${name} to: ${elapsedMsg}`);
+        } catch (patchErr) {
+          console.error(`Failed to update last_run_at for ${name}:`, patchErr);
+        }
+
+        // Log results
+        await logEvent(
+          env, 
+          responseOk ? "info" : "error", 
+          `Broadcast "${name}" execute result`, 
+          { responseOk, error: responseError }
+        );
+      }
+    }
+  } catch (cronErr) {
+    console.error("Cron handler root error:", cronErr);
+    await logEvent(env, "error", "Cron handler root error", { message: cronErr.message });
   }
 }
 
@@ -929,11 +1150,12 @@ export default {
                   reply,
                 });
                 const targetThreadId = event.message?.thread_id || event.message_id;
-                await sendPrivateMessage(env, event.employee_code, reply, undefined, targetThreadId);
+                const { text: replyText, messageObj } = parseReplyMessage(reply);
+                await sendPrivateMessage(env, event.employee_code, replyText, messageObj, targetThreadId);
                 await saveMessage(env, convId, {
                   sender: "bot",
                   sender_name: "Bot",
-                  content: reply,
+                  content: replyText,
                   employee_code: event.employee_code,
                   is_auto_reply: true,
                   thread_id: targetThreadId,
@@ -1000,16 +1222,18 @@ export default {
                   reply,
                 });
                 const targetThreadId = event.message?.thread_id || event.message_id;
+                const { text: replyText, messageObj } = parseReplyMessage(reply);
                 await sendGroupMessage(
                   env,
                   event.group_id,
-                  reply,
+                  replyText,
                   targetThreadId,
+                  messageObj
                 );
                 await saveMessage(env, convId, {
                   sender: "bot",
                   sender_name: "Bot",
-                  content: reply,
+                  content: replyText,
                   group_id: event.group_id,
                   thread_id: targetThreadId,
                   is_auto_reply: true,
@@ -1033,11 +1257,12 @@ export default {
               });
               if (reply) {
                 try {
-                  await sendGroupMessage(env, groupId, reply);
+                  const { text: replyText, messageObj } = parseReplyMessage(reply);
+                  await sendGroupMessage(env, groupId, replyText, undefined, messageObj);
                   await saveMessage(env, convId, {
                     sender: "bot",
                     sender_name: "Bot",
-                    content: reply,
+                    content: replyText,
                     group_id: groupId,
                     is_auto_reply: true,
                   });
@@ -1345,5 +1570,8 @@ export default {
         },
       );
     }
+  },
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runScheduledBroadcasts(env));
   },
 };

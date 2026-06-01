@@ -88,20 +88,92 @@ async function getAccessToken() {
   }
 }
 
-async function sendPrivateMessage(employeeCode: string, text: string) {
+function processMessageMentions(messageObj: any) {
+  if (!messageObj) return messageObj;
+  const messageData = JSON.parse(JSON.stringify(messageObj));
+
+  if (messageData.tag === "text" && messageData.text) {
+    let content = messageData.text.content || "";
+    const emails = messageData.text.mentioned_email_list || [];
+    let atAll = messageData.text.at_all || false;
+
+    const mentionRegex = /<mention\s+email=["']([^"']+)["']>\s*<\/mention>/gi;
+    let match;
+    while ((match = mentionRegex.exec(content)) !== null) {
+      if (!emails.includes(match[1])) {
+        emails.push(match[1]);
+      }
+    }
+
+    content = content.replace(mentionRegex, (m, email) => {
+      const name = email.split("@")[0];
+      return `@${name}`;
+    });
+
+    const atAllRegex = /<mention>\s*<\/mention>/gi;
+    if (atAllRegex.test(content)) {
+      atAll = true;
+      content = content.replace(atAllRegex, "@all");
+    }
+
+    messageData.text.content = content;
+    if (emails.length > 0) {
+      messageData.text.mentioned_email_list = emails;
+    }
+    if (atAll) {
+      messageData.text.at_all = true;
+    }
+  } else if (messageData.tag === "markdown" && messageData.markdown) {
+    let content = messageData.markdown.content || "";
+    const emails = messageData.markdown.mentioned_email_list || [];
+    let atAll = messageData.markdown.at_all || false;
+
+    const mentionRegex = /<mention\s+email=["']([^"']+)["']>\s*<\/mention>/gi;
+    let match;
+    while ((match = mentionRegex.exec(content)) !== null) {
+      if (!emails.includes(match[1])) {
+        emails.push(match[1]);
+      }
+    }
+
+    content = content.replace(mentionRegex, (m, email) => {
+      const name = email.split("@")[0];
+      return `@${name}`;
+    });
+
+    const atAllRegex = /<mention>\s*<\/mention>/gi;
+    if (atAllRegex.test(content)) {
+      atAll = true;
+      content = content.replace(atAllRegex, "@all");
+    }
+
+    messageData.markdown.content = content;
+    if (emails.length > 0) {
+      messageData.markdown.mentioned_email_list = emails;
+    }
+    if (atAll) {
+      messageData.markdown.at_all = true;
+    }
+  }
+  return messageData;
+}
+
+async function sendPrivateMessage(employeeCode: string, text: string, messageObj?: any) {
   const token = await getAccessToken();
   if (!token) return;
+  const messageData = messageObj ? messageObj : processMessageMentions({ tag: 'text', text: { format: 1, content: text } });
   await fetch(`${SEATALK_API}/messaging/v2/single_chat`, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ employee_code: employeeCode, message: { tag: 'text', text: { content: text } } }),
+    body: JSON.stringify({ employee_code: employeeCode, message: messageData }),
   });
 }
 
-async function sendGroupMessage(groupId: string, text: string, threadId?: string) {
+async function sendGroupMessage(groupId: string, text: string, threadId?: string, messageObj?: any) {
   const token = await getAccessToken();
   if (!token) return;
-  const body: any = { group_id: groupId, message: { tag: 'text', text: { content: text } } };
+  const messageData = messageObj ? messageObj : processMessageMentions({ tag: 'text', text: { format: 1, content: text } });
+  const body: any = { group_id: groupId, message: messageData };
   if (threadId) body.thread_id = threadId;
   await fetch(`${SEATALK_API}/messaging/v2/group_chat`, {
     method: 'POST',
@@ -143,6 +215,38 @@ function saveMessage(convId: number, info: any) {
     .run(info.content.substring(0, 80), new Date().toISOString(), info.is_auto_reply ? 0 : 1, convId);
 }
 
+
+function parseReplyMessage(reply: string) {
+  if (!reply) return { text: "", messageObj: undefined };
+  let messageObj = undefined;
+  let text = reply;
+  try {
+    const trimmed = reply.trim();
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && parsed.tag) {
+        messageObj = parsed;
+        if (parsed.tag === "interactive_message") {
+          text = "[Interactive Message]";
+        } else if (parsed.tag === "image") {
+          text = "[Image]";
+        } else if (parsed.tag === "file") {
+          text = `[File: ${parsed.file?.filename || "Uploaded file"}]`;
+        } else if (parsed.tag === "markdown") {
+          text = parsed.markdown?.content || "[Markdown]";
+        } else if (parsed.tag === "text") {
+          text = parsed.text?.content || reply;
+        } else {
+          text = `[${parsed.tag.toUpperCase()} Message]`;
+        }
+      } else if (parsed && parsed.interactive_message) {
+        messageObj = { tag: "interactive_message", ...parsed };
+        text = "[Interactive Message]";
+      }
+    }
+  } catch (e) {}
+  return { text, messageObj };
+}
 
 function getAutoReply(text: string) {
   const rules = db.prepare('SELECT * FROM auto_reply_rules WHERE is_active = 1 ORDER BY priority DESC').all() as any[];
@@ -188,8 +292,9 @@ app.post('/api/seatalk/webhook', async (req, res) => {
          
          const rep = getAutoReply(content);
          if (rep) {
-           await sendPrivateMessage(event.employee_code, rep);
-           saveMessage((conv as any).id, { sender: 'bot', sender_name: 'Bot', content: rep, employee_code: event.employee_code, is_auto_reply: true });
+           const { text: replyText, messageObj } = parseReplyMessage(rep);
+           await sendPrivateMessage(event.employee_code, replyText, messageObj);
+           saveMessage((conv as any).id, { sender: 'bot', sender_name: 'Bot', content: replyText, employee_code: event.employee_code, is_auto_reply: true });
          }
        }
     } else if (eventType === 'new_mentioned_message_received_from_group_chat') {
@@ -200,8 +305,9 @@ app.post('/api/seatalk/webhook', async (req, res) => {
          
          const rep = getAutoReply(content);
          if (rep) {
-           await sendGroupMessage(event.group_id, rep, event.thread_id);
-           saveMessage((conv as any).id, { sender: 'bot', sender_name: 'Bot', content: rep, group_id: event.group_id, is_auto_reply: true });
+           const { text: replyText, messageObj } = parseReplyMessage(rep);
+           await sendGroupMessage(event.group_id, replyText, event.thread_id, messageObj);
+           saveMessage((conv as any).id, { sender: 'bot', sender_name: 'Bot', content: replyText, group_id: event.group_id, is_auto_reply: true });
          }
        }
     } else if (eventType === 'user_enter_chatroom_with_bot') {

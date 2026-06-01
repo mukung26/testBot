@@ -325,6 +325,8 @@ function ChatInterface() {
     "default" | "zh-Hans" | "code"
   >("default");
 
+  const [jsonCodeText, setJsonCodeText] = useState<string>("");
+
   const [elementsDefault, setElementsDefault] = useState<any[]>([
     {
       element_type: "title",
@@ -368,6 +370,27 @@ function ChatInterface() {
       },
     },
   ]);
+
+  useEffect(() => {
+    const obj = {
+      tag: "interactive_message",
+      interactive_message: {
+        elements: elementsDefault,
+        ...(builderLangMode === "dual" ? { "zh-Hans": { elements: elementsZh } } : {}),
+      },
+    };
+    try {
+      const currentParsed = JSON.parse(jsonCodeText);
+      const isMatch = JSON.stringify(currentParsed) === JSON.stringify(obj);
+      if (!isMatch) {
+        setJsonCodeText(JSON.stringify(obj, null, 2));
+      }
+    } catch (e) {
+      if (activeBuilderTab !== "code") {
+        setJsonCodeText(JSON.stringify(obj, null, 2));
+      }
+    }
+  }, [elementsDefault, elementsZh, builderLangMode, activeBuilderTab]);
 
   const getElementsList = () => {
     if (activeBuilderTab === "zh-Hans") return elementsZh;
@@ -537,30 +560,93 @@ function ChatInterface() {
         },
       },
     ]);
-    if (builderLangMode === "dual") {
-      setElementsZh([
-        {
-          element_type: "title",
-          title: { text: "基本通知" },
+    setElementsZh([
+      {
+        element_type: "title",
+        title: { text: "基本通知" },
+      },
+      {
+        element_type: "description",
+        description: {
+          format: 1,
+          text: "这是一条标准消息。您可以点击下方按钮确认。",
         },
-        {
-          element_type: "description",
-          description: {
-            format: 1,
-            text: "这是一条标准消息。您可以点击下方按钮确认。",
-          },
+      },
+      {
+        element_type: "button",
+        button: {
+          button_type: "callback",
+          text: "确认",
+          value: "ack",
+          sim_response: "感谢您的确认。",
         },
-        {
-          element_type: "button",
-          button: {
+      },
+    ]);
+    toast.success("Loaded Basic Callback template!");
+  };
+
+  const loadApprovalTemplate = () => {
+    setElementsDefault([
+      {
+        element_type: "title",
+        title: { text: "Approval Request (PR-2026-08)" },
+      },
+      {
+        element_type: "description",
+        description: {
+          format: 1,
+          text: "**Department**: Asia Operations\n**Amount**: $1,500.00\n**Details**: Equipment Upgrade for Infrastructure Support\n\n*Please approve or deny this request.*",
+        },
+      },
+      {
+        element_type: "button_group",
+        button_group: [
+          {
             button_type: "callback",
-            text: "确认",
-            value: "ack",
-            sim_response: "感谢您的确认。",
+            text: "Approve",
+            value: "approve_request",
+            sim_response: "✅ **Request Approved:** You have approved Purchase Request PR-3882.",
           },
+          {
+            button_type: "callback",
+            text: "Deny",
+            value: "deny_request",
+            sim_response: "❌ **Request Denied:** You have rejected Purchase Request PR-3882.",
+          }
+        ],
+      },
+    ]);
+    setElementsZh([
+      {
+        element_type: "title",
+        title: { text: "审批请求 (PR-2026-08)" },
+      },
+      {
+        element_type: "description",
+        description: {
+          format: 1,
+          text: "**部门**: 亚洲运营部\n**金额**: $1,500.00\n**详情**: 基础支撑设备升级\n\n*请批准或谢绝该请求。*",
         },
-      ]);
-    }
+      },
+      {
+        element_type: "button_group",
+        button_group: [
+          {
+            button_type: "callback",
+            text: "批准",
+            value: "approve_request",
+            sim_response: "✅ **审批已批准：** 您已批准采购请求 PR-3882。",
+          },
+          {
+            button_type: "callback",
+            text: "谢绝",
+            value: "deny_request",
+            sim_response: "❌ **审批已拒绝：** 您已拒绝采购请求 PR-3882。",
+          }
+        ],
+      },
+    ]);
+    toast.success("Loaded Approval Flow template!");
   };
 
   const loadAttendanceTemplate = () => {
@@ -610,7 +696,7 @@ function ChatInterface() {
         element_type: "description",
         description: {
           format: 1,
-          text: "如果您在岗或正在申请加班 (RDOT/OT)，请填写这些表格。如果您未在此提交记录，可能会被标记为“缺勤”或“休假”。nn[每日考勤表](https://forms.gle/8sZ9QEPs7oSEFJFk9)n[RDOT/OT 申请表](https://forms.gle/EFhd8dDNJDhVZwdVA)",
+          text: "如果您在岗或正在申请加班 (RDOT/OT)，请填写这些表格。nn[每日考勤表](https://forms.gle/8sZ9QEPs7oSEFJFk9)n[RDOT/OT 申请表](https://forms.gle/EFhd8dDNJDhVZwdVA)",
         },
       },
       {
@@ -638,7 +724,67 @@ function ChatInterface() {
         ],
       },
     ]);
-    toast.success("Loaded Attendance template!");
+    toast.success("Loaded Daily Attendance template!");
+  };
+
+  const loadExternalLinkTemplate = () => {
+    setElementsDefault([
+      {
+        element_type: "title",
+        title: { text: "SeaTalk Open Platform API Guide" },
+      },
+      {
+        element_type: "description",
+        description: {
+          format: 1,
+          text: "Check out the official SeaTalk SDK API documentation to build embedded enterprise apps and interactive workflows inside SeaTalk Workspace.\n\n*Click the link below to get started.*",
+        },
+      },
+      {
+        element_type: "button",
+        button: {
+          button_type: "redirect",
+          text: "SDK Documentation",
+          desktop_link: {
+            type: "web",
+            path: "https://open.seatalk.io",
+          },
+          mobile_link: {
+            type: "web",
+            path: "https://open.seatalk.io",
+          },
+        },
+      },
+    ]);
+    setElementsZh([
+      {
+        element_type: "title",
+        title: { text: "SeaTalk 开放平台 API 开发指南" },
+      },
+      {
+        element_type: "description",
+        description: {
+          format: 1,
+          text: "查阅官方 SeaTalk SDK API 文档，在 SeaTalk 工作套件中构建集成的企业自建应用与交互式流程结构。\n\n*点击下方链接开始开发。*",
+        },
+      },
+      {
+        element_type: "button",
+        button: {
+          button_type: "redirect",
+          text: "SDK 开发者文档",
+          desktop_link: {
+            type: "web",
+            path: "https://open.seatalk.io",
+          },
+          mobile_link: {
+            type: "web",
+            path: "https://open.seatalk.io",
+          },
+        },
+      },
+    ]);
+    toast.success("Loaded External Link template!");
   };
 
   const handleInteractiveButtonClick = async (btn: any, messageId: string) => {
@@ -1795,35 +1941,50 @@ function ChatInterface() {
           <DialogHeader className="shrink-0 border-b border-[#222] p-4 md:p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             <div className="flex-1 min-w-0">
               <DialogTitle className="text-xl md:text-2xl font-bold text-[#ededed] flex items-center gap-2">
-                <Sparkles className="text-[#a1a1aa] hover:text-white" size={20} />
-                SeaTalk Interactive Message Card Builder
+                <Terminal className="text-white animate-pulse" size={20} />
+                Workplace Playground
               </DialogTitle>
-              <p className="text-xs text-[#888888] mt-1 max-w-md">
-                Build and customize dynamic message cards matching the official
-                SeaTalk Open Platform schema.
+              <p className="text-xs text-[#888888] mt-1 max-w-sm">
+                Build and simulate interactive message cards for SeaTalk Workspace workflows.
               </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2 mr-2">
-                <span className="text-[10px] font-bold text-[#888888] uppercase tracking-widest hidden sm:inline">
-                  Preserve:
+              <div className="flex flex-wrap items-center gap-1.5 p-1 bg-[#222]/30 rounded-xl border border-[#222]">
+                <span className="text-[9px] font-bold text-white/50 uppercase tracking-widest px-2">
+                  Presets:
                 </span>
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8 text-xs font-semibold px-2.5 bg-[#111] text-white border border-[#222] hover:bg-black cursor-pointer flex items-center gap-1 shadow-sm"
+                  className="h-8 text-xs font-semibold px-2.5 bg-[#111] text-white border border-[#222] hover:bg-black cursor-pointer rounded-lg transition-all"
                   onClick={loadGenericTemplate}
                 >
-                  <span>📝</span> Default
+                  Basic Callback
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8 text-xs font-semibold px-2.5 bg-[#111] text-white border border-[#222] hover:bg-black cursor-pointer flex items-center gap-1 shadow-sm"
+                  className="h-8 text-xs font-semibold px-2.5 bg-[#111] text-white border border-[#222] hover:bg-black cursor-pointer rounded-lg transition-all"
+                  onClick={loadApprovalTemplate}
+                >
+                  Approval Flow
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs font-semibold px-2.5 bg-[#111] text-white border border-[#222] hover:bg-black cursor-pointer rounded-lg transition-all"
                   onClick={loadAttendanceTemplate}
                 >
-                  <span>📋</span> Form Callback
+                  Daily Attendance
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs font-semibold px-2.5 bg-[#111] text-white border border-[#222] hover:bg-black cursor-pointer rounded-lg transition-all"
+                  onClick={loadExternalLinkTemplate}
+                >
+                  External Link
                 </Button>
               </div>
 
@@ -1891,31 +2052,25 @@ function ChatInterface() {
                   </div>
                   <Textarea
                     className="flex-1 font-mono text-xs p-4 bg-[#0a0a0a] text-green-400 rounded-xl resize-none whitespace-pre focus-visible:ring-blue-500"
-                    value={JSON.stringify(
-                      {
-                        tag: "interactive_message",
-                        interactive_message: {
-                          elements: elementsDefault,
-                          ...(builderLangMode === "dual"
-                            ? { "zh-Hans": { elements: elementsZh } }
-                            : {}),
-                        },
-                      },
-                      null,
-                      2,
-                    )}
+                    value={jsonCodeText}
                     onChange={(e) => {
+                      const txt = e.target.value;
+                      setJsonCodeText(txt);
                       try {
-                        const parsed = JSON.parse(e.target.value);
+                        const parsed = JSON.parse(txt);
                         const iMsg = parsed.interactive_message;
                         if (iMsg) {
-                          if (iMsg.elements) setElementsDefault(iMsg.elements);
-                          else if (iMsg.default?.elements)
+                          if (iMsg.elements) {
+                            setElementsDefault(iMsg.elements);
+                          } else if (iMsg.default?.elements) {
                             setElementsDefault(iMsg.default.elements);
+                          }
 
                           if (iMsg["zh-Hans"]?.elements) {
                             setElementsZh(iMsg["zh-Hans"].elements);
                             setBuilderLangMode("dual");
+                          } else {
+                            setBuilderLangMode("single");
                           }
                         }
                       } catch (err) {}
@@ -3035,8 +3190,179 @@ function ChatInterface() {
   );
 }
 
+function parseReplyMessage(reply: string) {
+  if (!reply) return { text: "", messageObj: undefined };
+  let messageObj = undefined;
+  let text = reply;
+  try {
+    const trimmed = reply.trim();
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && parsed.tag) {
+        messageObj = parsed;
+        if (parsed.tag === "interactive_message") {
+          text = "[Interactive Card]";
+        } else if (parsed.tag === "image") {
+          text = "[Image]";
+        } else if (parsed.tag === "file") {
+          text = `[File: ${parsed.file?.filename || "Uploaded file"}]`;
+        } else if (parsed.tag === "markdown") {
+          text = parsed.markdown?.content || "[Markdown]";
+        } else if (parsed.tag === "text") {
+          text = parsed.text?.content || reply;
+        } else {
+          text = `[${parsed.tag.toUpperCase()} Message]`;
+        }
+      } else if (parsed && parsed.interactive_message) {
+        messageObj = { tag: "interactive_message", ...parsed };
+        text = "[Interactive Card]";
+      }
+    }
+  } catch (e) {}
+  return { text, messageObj };
+}
+
 // --- Auto Reply Rules ---
 function AutoReplyRules() {
+  const INTERACTIVE_TEMPLATES = {
+    basic_callback: {
+      tag: "interactive_message",
+      interactive_message: {
+        elements: [
+          {
+            element_type: "title",
+            title: { text: "Basic Notification" },
+          },
+          {
+            element_type: "description",
+            description: {
+              format: 1,
+              text: "Here is a standard message. You can acknowledge it by clicking the button below.",
+            },
+          },
+          {
+            element_type: "button",
+            button: {
+              button_type: "callback",
+              text: "Acknowledge",
+              value: "ack",
+              sim_response: "Thank you for acknowledging.",
+            },
+          },
+        ]
+      }
+    },
+    approval_flow: {
+      tag: "interactive_message",
+      interactive_message: {
+        elements: [
+          {
+            element_type: "title",
+            title: { text: "Approval Request (PR-2026-08)" },
+          },
+          {
+            element_type: "description",
+            description: {
+              format: 1,
+              text: "**Department**: Asia Operations\n**Amount**: $1,500.00\n**Details**: Equipment Upgrade for Infrastructure Support\n\n*Please approve or deny this request.*",
+            },
+          },
+          {
+            element_type: "button_group",
+            button_group: [
+              {
+                button_type: "callback",
+                text: "Approve",
+                value: "approve_request",
+                sim_response: "✅ **Request Approved:** You have approved Purchase Request PR-3882.",
+              },
+              {
+                button_type: "callback",
+                text: "Deny",
+                value: "deny_request",
+                sim_response: "❌ **Request Denied:** You have rejected Purchase Request PR-3882.",
+              }
+            ],
+          },
+        ]
+      }
+    },
+    daily_attendance: {
+      tag: "interactive_message",
+      interactive_message: {
+        elements: [
+          {
+            element_type: "title",
+            title: { text: "📢 @All 2AM" },
+          },
+          {
+            element_type: "description",
+            description: {
+              format: 1,
+              text: "Please fill out these forms if you're present or filing for RDOT/OT. If you haven't submitted your entry here, you may be marked as \"absent\" or \"off\".\n\n[Daily Attendance Form](https://forms.gle/8sZ9QEPs7oSEFJFk9)\n[RDOT/OT Form](https://forms.gle/EFhd8dDNJDhVZwdVA)",
+            },
+          },
+          {
+            element_type: "button_group",
+            button_group: [
+              {
+                button_type: "callback",
+                text: "Mark Present",
+                value: "at_present",
+                sim_response: "✅ **Attendance Logged:** Your profile has been recorded.",
+              },
+              {
+                button_type: "redirect",
+                text: "Full Form",
+                desktop_link: {
+                  type: "web",
+                  path: "https://forms.gle/8sZ9QEPs7oSEFJFk9",
+                },
+                mobile_link: {
+                  type: "web",
+                  path: "https://forms.gle/8sZ9QEPs7oSEFJFk9",
+                },
+              },
+            ],
+          },
+        ]
+      }
+    },
+    external_link: {
+      tag: "interactive_message",
+      interactive_message: {
+        elements: [
+          {
+            element_type: "title",
+            title: { text: "SeaTalk Open Platform API Guide" },
+          },
+          {
+            element_type: "description",
+            description: {
+              format: 1,
+              text: "Check out the official SeaTalk SDK documentation for workflows.\n\n*Click below to preview.*",
+            },
+          },
+          {
+            element_type: "button",
+            button: {
+              button_type: "redirect",
+              text: "SDK Documentation",
+              desktop_link: {
+                type: "web",
+                path: "https://open.seatalk.io",
+              },
+              mobile_link: {
+                type: "web",
+                path: "https://open.seatalk.io",
+              },
+            },
+          },
+        ]
+      }
+    }
+  };
+
   const [rules, setRules] = useState<any[]>([]);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [triggerType, setTriggerType] = useState("keyword");
@@ -3046,6 +3372,75 @@ function AutoReplyRules() {
   const [allowedEmails, setAllowedEmails] = useState("");
   const [replyMessage, setReplyMessage] = useState("");
   const [priority, setPriority] = useState("0");
+  const [replyType, setReplyType] = useState("text"); // "text", "image", "file", "interactive"
+  const [selectedTemplate, setSelectedTemplate] = useState("basic_callback");
+  const [uploading, setUploading] = useState(false);
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const insertFormat = (prefix: string, suffix: string = "") => {
+    if (!textareaRef.current) return;
+    const textarea = textareaRef.current;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = textarea.value;
+    const before = text.substring(0, start);
+    const selected = text.substring(start, end);
+    const after = text.substring(end);
+
+    let newText = "";
+    if (selected) {
+      newText = before + prefix + selected + suffix + after;
+    } else {
+      newText = before + prefix + suffix + after;
+    }
+    setReplyMessage(newText);
+    textarea.focus();
+    setTimeout(() => {
+      textarea.selectionStart = start + prefix.length;
+      textarea.selectionEnd = start + prefix.length + selected.length;
+    }, 0);
+  };
+
+  const handleFileUploadInRules = (e: React.ChangeEvent<HTMLInputElement>, type: "image" | "file") => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const base64Str = ev.target?.result as string;
+      const base64Data = base64Str.split(",")[1];
+      let msgObj: any = {};
+      if (type === "image") {
+        msgObj = {
+          tag: "image",
+          image: { content: base64Data }
+        };
+      } else {
+        msgObj = {
+          tag: "file",
+          file: { filename: file.name, content: base64Data }
+        };
+      }
+      setReplyMessage(JSON.stringify(msgObj, null, 2));
+      setUploading(false);
+      toast.success(`${type === "image" ? "Image" : "File"} loaded successfully!`);
+    };
+    reader.onerror = () => {
+      setUploading(false);
+      toast.error("Failed to load file.");
+    };
+    reader.readAsDataURL(file);
+  };
+
+  useEffect(() => {
+    if (replyType === "interactive") {
+      const templateObj = INTERACTIVE_TEMPLATES[selectedTemplate as keyof typeof INTERACTIVE_TEMPLATES];
+      setReplyMessage(JSON.stringify(templateObj, null, 2));
+    }
+  }, [replyType, selectedTemplate]);
 
   useEffect(() => {
     try {
@@ -3083,6 +3478,7 @@ function AutoReplyRules() {
       setPermissionType("everyone");
       setAllowedEmails("");
       setPriority("0");
+      setReplyType("text");
       toast.success("Rule added");
     } catch (e) {
       toast.error("Failed to add rule");
@@ -3230,14 +3626,248 @@ function AutoReplyRules() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-sm font-medium">Reply Message</label>
-                  <Textarea
-                    value={replyMessage}
-                    onChange={(e) => setReplyMessage(e.target.value)}
-                    rows={4}
-                    placeholder="Type the automated response..."
-                  />
+                  <label className="text-sm font-medium">Response Message Type</label>
+                  <Select
+                    value={replyType}
+                    onValueChange={(val) => {
+                      setReplyType(val);
+                      if (val === "text") {
+                        setReplyMessage("");
+                      } else if (val === "interactive") {
+                        const templateObj = INTERACTIVE_TEMPLATES[selectedTemplate as keyof typeof INTERACTIVE_TEMPLATES];
+                        setReplyMessage(JSON.stringify(templateObj, null, 2));
+                      } else {
+                        setReplyMessage("");
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="text">Rich Text / Markdown (with @Mentions)</SelectItem>
+                      <SelectItem value="image">Image Attachment</SelectItem>
+                      <SelectItem value="file">File Attachment</SelectItem>
+                      <SelectItem value="interactive">Interactive Message Card</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
+
+                {replyType === "text" && (
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="text-sm font-medium">Reply Message Content</label>
+                      <div className="flex bg-[#111] rounded-md p-1 gap-1 items-center border border-neutral-800 scale-90 origin-right">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-[#888888] hover:bg-neutral-800 hover:text-white"
+                          onClick={() => insertFormat("**", "**")}
+                          title="Bold"
+                        >
+                          <Bold size={14} />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-[#888888] hover:bg-neutral-800 hover:text-white"
+                          onClick={() => insertFormat("*", "*")}
+                          title="Italic"
+                        >
+                          <Italic size={14} />
+                        </Button>
+                        <div className="w-px h-3 bg-neutral-800 mx-0.5"></div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-[#888888] hover:bg-neutral-800 hover:text-white"
+                          onClick={() => insertFormat("- ")}
+                          title="Bulleted List"
+                        >
+                          <List size={14} />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-[#888888] hover:bg-neutral-800 hover:text-white"
+                          onClick={() => insertFormat("1. ")}
+                          title="Numbered List"
+                        >
+                          <ListOrdered size={14} />
+                        </Button>
+                        <div className="w-px h-3 bg-neutral-800 mx-0.5"></div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-[#888888] hover:bg-neutral-800 hover:text-white"
+                          onClick={() => insertFormat("```\n", "\n```")}
+                          title="Code Block"
+                        >
+                          <Code size={14} />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-white bg-neutral-950 hover:bg-neutral-800 rounded ml-1"
+                          onClick={() => insertFormat('<mention email="', '"></mention>')}
+                          title="Mention (@email)"
+                        >
+                          <AtSign size={14} className="text-neutral-400" />
+                        </Button>
+                      </div>
+                    </div>
+                    <Textarea
+                      ref={textareaRef}
+                      value={replyMessage}
+                      onChange={(e) => setReplyMessage(e.target.value)}
+                      rows={5}
+                      placeholder="Type your reply message... You can use standard formatting or click helper buttons above."
+                      className="font-mono text-xs"
+                    />
+                  </div>
+                )}
+
+                {replyType === "image" && (
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium">Image Upload</label>
+                    <input
+                      type="file"
+                      ref={imageInputRef}
+                      onChange={(e) => handleFileUploadInRules(e, "image")}
+                      accept="image/*"
+                      className="hidden"
+                    />
+                    <div
+                      onClick={() => imageInputRef.current?.click()}
+                      className="border-dashed border-2 border-neutral-800 rounded-xl p-8 bg-zinc-950/40 text-center hover:bg-zinc-950 hover:border-blue-800 cursor-pointer transition flex flex-col items-center justify-center gap-2"
+                    >
+                      <ImageIcon className="h-8 w-8 text-[#888888]" />
+                      <div className="text-xs text-[#ececec]">
+                        {uploading ? "Processing Image..." : "Click to select or upload image"}
+                      </div>
+                      <span className="text-[10px] text-neutral-500">Supports PNG, JPG, GIF up to 5MB</span>
+                    </div>
+
+                    {replyMessage && replyMessage.includes("tag") && (() => {
+                      try {
+                        const parsed = JSON.parse(replyMessage);
+                        if (parsed.tag === "image" && parsed.image?.content) {
+                          return (
+                            <div className="mt-3 relative w-full h-32 bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden flex items-center justify-center">
+                              <img
+                                src={`data:image/png;base64,${parsed.image.content}`}
+                                className="object-contain h-full w-full"
+                                alt="Rule preview"
+                              />
+                              <Button
+                                type="button"
+                                variant="destructive"
+                                size="sm"
+                                className="absolute bottom-2 right-2 scale-90 font-bold"
+                                onClick={() => setReplyMessage("")}
+                              >
+                                Clear Image
+                              </Button>
+                            </div>
+                          );
+                        }
+                      } catch (e) {}
+                      return null;
+                    })()}
+                  </div>
+                )}
+
+                {replyType === "file" && (
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium">File Attachment Upload</label>
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={(e) => handleFileUploadInRules(e, "file")}
+                      className="hidden"
+                    />
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      className="border-dashed border-2 border-neutral-800 rounded-xl p-8 bg-zinc-950/40 text-center hover:bg-zinc-950 hover:border-blue-800 cursor-pointer transition flex flex-col items-center justify-center gap-2"
+                    >
+                      <FileText className="h-8 w-8 text-[#888888]" />
+                      <div className="text-xs text-[#ececec]">
+                        {uploading ? "Processing Document..." : "Click or upload document"}
+                      </div>
+                      <span className="text-[10px] text-neutral-500">Supports PDF, XLSX, CSV, DOC, TXT up to 10MB</span>
+                    </div>
+
+                    {replyMessage && replyMessage.includes("tag") && (() => {
+                      try {
+                        const parsed = JSON.parse(replyMessage);
+                        if (parsed.tag === "file" && parsed.file?.filename) {
+                          return (
+                            <div className="mt-3 p-3 bg-neutral-900 border border-neutral-800 rounded-lg flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <FileText className="text-blue-500 shrink-0" size={18} />
+                                <span className="text-xs font-semibold text-white truncate max-w-xs">{parsed.file.filename}</span>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="destructive"
+                                size="sm"
+                                className="scale-90 font-bold"
+                                onClick={() => setReplyMessage("")}
+                              >
+                                Clear File
+                              </Button>
+                            </div>
+                          );
+                        }
+                      } catch (e) {}
+                      return null;
+                    })()}
+                  </div>
+                )}
+
+                {replyType === "interactive" && (
+                  <div className="space-y-3">
+                    <div className="space-y-1 animate-fadeIn">
+                      <label className="text-xs font-semibold text-[#888888]">
+                        Interactive Message Template
+                      </label>
+                      <Select value={selectedTemplate} onValueChange={setSelectedTemplate}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="basic_callback">Basic Callback Card</SelectItem>
+                          <SelectItem value="approval_flow">Approval Flow Action Buttons</SelectItem>
+                          <SelectItem value="daily_attendance">Daily Attendance Checkin</SelectItem>
+                          <SelectItem value="external_link">Open Platform API SDK Links</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[10px] text-[#888888]">
+                        Select a predefined card from the Workplace Playground presets.
+                      </p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium">Message Payload (JSON Specification)</label>
+                      <Textarea
+                        value={replyMessage}
+                        onChange={(e) => setReplyMessage(e.target.value)}
+                        rows={8}
+                        className="font-mono text-xs"
+                        placeholder='{"tag": "interactive_message", ...}'
+                      />
+                      <p className="text-[10px] text-[#888888] italic">
+                        Verify that this is a valid JSON interactive card adhering to the SeaTalk specification schema.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsAddOpen(false)}>
@@ -3350,9 +3980,67 @@ function AutoReplyRules() {
                             </span>
                           </div>
                         )}
-                      <p className="text-sm text-[#a1a1aa] whitespace-pre-wrap bg-black p-3 rounded-md border border-[#222] font-mono text-[13px]">
-                        {r.reply_message}
-                      </p>
+                      {(() => {
+                        try {
+                          const msg = (r.reply_message || "").trim();
+                          if (msg.startsWith("{") && msg.endsWith("}")) {
+                            const parsed = JSON.parse(msg);
+                            if (parsed && parsed.tag === "interactive_message") {
+                              const iMsgObj = parsed.interactive_message || parsed;
+                              const els = iMsgObj.elements || [];
+                              const titleEl = els.find((el: any) => el.element_type === "title");
+                              return (
+                                <div className="bg-[#1e1e38]/40 p-3 rounded-xl border border-indigo-950 shadow-sm leading-relaxed max-w-lg">
+                                  <div className="flex items-center gap-1.5 text-[10px] text-indigo-400 font-bold uppercase tracking-wider mb-2">
+                                    <Sparkles size={11} className="text-indigo-400" /> Interactive Message Card
+                                  </div>
+                                  <div className="text-xs text-[#ededed]">
+                                    <span className="text-[#888888]">Card Title:</span>{" "}
+                                    <strong className="text-white font-semibold">{titleEl?.title?.text || "No Title"}</strong>
+                                  </div>
+                                  <div className="text-[10px] text-[#888888] font-mono mt-1">
+                                    Contains {els.length} structured layout elements
+                                  </div>
+                                </div>
+                              );
+                            } else if (parsed && parsed.tag === "image" && parsed.image?.content) {
+                              return (
+                                <div className="bg-[#111] p-3 rounded-xl border border-neutral-800 shadow-sm leading-relaxed max-w-sm">
+                                  <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-bold uppercase tracking-wider mb-2">
+                                    <ImageIcon size={11} className="text-emerald-400" /> Automated Image Reply
+                                  </div>
+                                  <div className="relative w-full h-24 bg-black border border-neutral-850 rounded-lg overflow-hidden flex items-center justify-center">
+                                    <img
+                                      src={`data:image/png;base64,${parsed.image.content}`}
+                                      className="object-contain h-full w-full"
+                                      alt="Reply payload"
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            } else if (parsed && parsed.tag === "file" && parsed.file?.filename) {
+                              return (
+                                <div className="bg-[#111] p-3 rounded-xl border border-neutral-800 shadow-sm leading-relaxed max-w-sm">
+                                  <div className="flex items-center gap-1.5 text-[10px] text-cyan-400 font-bold uppercase tracking-wider mb-2">
+                                    <FileText size={11} className="text-cyan-400" /> Automated File Reply
+                                  </div>
+                                  <div className="flex items-center gap-2 p-2 bg-black border border-neutral-850 rounded-lg">
+                                    <FileText className="text-blue-500 shrink-0" size={16} />
+                                    <span className="text-xs text-white truncate font-medium max-w-[200px]">
+                                      {parsed.file.filename}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            }
+                          }
+                        } catch (e) {}
+                        return (
+                          <p className="text-sm text-[#a1a1aa] whitespace-pre-wrap bg-black p-3 rounded-md border border-[#222] font-mono text-[13px]">
+                            {r.reply_message}
+                          </p>
+                        );
+                      })()}
                     </div>
                     <Button
                       variant="ghost"
@@ -4042,8 +4730,9 @@ function BroadcastsScheduler() {
   const [scheduledDate, setScheduledDate] = useState("");
   const [chatType, setChatType] = useState("private");
   const [targetId, setTargetId] = useState("");
-  const [msgType, setMsgType] = useState("text");
+  const [msgType, setMsgType] = useState("text"); // "text", "image", "file", "interactive"
   const [content, setContent] = useState("");
+  const [uploading, setUploading] = useState(false);
   const [interactiveJson, setInteractiveJson] = useState(`{
   "title": "Scheduled Notification",
   "description": "This is a scheduled push alert. Click to take action.",
@@ -4061,6 +4750,210 @@ function BroadcastsScheduler() {
     }
   ]
 }`);
+  const [schedulerTemplate, setSchedulerTemplate] = useState("basic_callback");
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const insertFormatInScheduler = (prefix: string, suffix: string = "") => {
+    if (!textareaRef.current) return;
+    const textarea = textareaRef.current;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = textarea.value;
+    const before = text.substring(0, start);
+    const selected = text.substring(start, end);
+    const after = text.substring(end);
+
+    let newText = "";
+    if (selected) {
+      newText = before + prefix + selected + suffix + after;
+    } else {
+      newText = before + prefix + suffix + after;
+    }
+    setContent(newText);
+    textarea.focus();
+    setTimeout(() => {
+      textarea.selectionStart = start + prefix.length;
+      textarea.selectionEnd = start + prefix.length + selected.length;
+    }, 0);
+  };
+
+  const handleFileUploadInScheduler = (e: React.ChangeEvent<HTMLInputElement>, type: "image" | "file") => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const base64Str = ev.target?.result as string;
+      const base64Data = base64Str.split(",")[1];
+      let msgObj: any = {};
+      if (type === "image") {
+        msgObj = {
+          tag: "image",
+          image: { content: base64Data }
+        };
+      } else {
+        msgObj = {
+          tag: "file",
+          file: { filename: file.name, content: base64Data }
+        };
+      }
+      setContent(JSON.stringify(msgObj, null, 2));
+      setUploading(false);
+      toast.success(`${type === "image" ? "Image" : "File"} loaded successfully!`);
+    };
+    reader.onerror = () => {
+      setUploading(false);
+      toast.error("Failed to load file.");
+    };
+    reader.readAsDataURL(file);
+  };
+
+  useEffect(() => {
+    const presets: Record<string, any> = {
+      basic_callback: {
+        tag: "interactive_message",
+        interactive_message: {
+          elements: [
+            {
+              element_type: "title",
+              title: { text: "Basic Notification" },
+            },
+            {
+              element_type: "description",
+              description: {
+                format: 1,
+                text: "Here is a standard message. You can acknowledge it by clicking the button below.",
+              },
+            },
+            {
+              element_type: "button",
+              button: {
+                button_type: "callback",
+                text: "Acknowledge",
+                value: "ack",
+                sim_response: "Thank you for acknowledging.",
+              },
+            },
+          ]
+        }
+      },
+      approval_flow: {
+        tag: "interactive_message",
+        interactive_message: {
+          elements: [
+            {
+              element_type: "title",
+              title: { text: "Approval Request (PR-2026-08)" },
+            },
+            {
+              element_type: "description",
+              description: {
+                format: 1,
+                text: "**Department**: Asia Operations\n**Amount**: $1,500.00\n**Details**: Equipment Upgrade for Infrastructure Support\n\n*Please approve or deny this request.*",
+              },
+            },
+            {
+              element_type: "button_group",
+              button_group: [
+                {
+                  button_type: "callback",
+                  text: "Approve",
+                  value: "approve_request",
+                  sim_response: "✅ **Request Approved:** You have approved Purchase Request PR-3882.",
+                },
+                {
+                  button_type: "callback",
+                  text: "Deny",
+                  value: "deny_request",
+                  sim_response: "❌ **Request Denied:** You have rejected Purchase Request PR-3882.",
+                }
+              ],
+            },
+          ]
+        }
+      },
+      daily_attendance: {
+        tag: "interactive_message",
+        interactive_message: {
+          elements: [
+            {
+              element_type: "title",
+              title: { text: "📢 @All 2AM" },
+            },
+            {
+              element_type: "description",
+              description: {
+                format: 1,
+                text: "Please fill out these forms if you're present or filing for RDOT/OT. If you haven't submitted your entry here, you may be marked as \"absent\" or \"off\".\n\n[Daily Attendance Form](https://forms.gle/8sZ9QEPs7oSEFJFk9)\n[RDOT/OT Form](https://forms.gle/EFhd8dDNJDhVZwdVA)",
+              },
+            },
+            {
+              element_type: "button_group",
+              button_group: [
+                {
+                  button_type: "callback",
+                  text: "Mark Present",
+                  value: "at_present",
+                  sim_response: "✅ **Attendance Logged:** Your profile has been recorded.",
+                },
+                {
+                  button_type: "redirect",
+                  text: "Full Form",
+                  desktop_link: {
+                    type: "web",
+                    path: "https://forms.gle/8sZ9QEPs7oSEFJFk9",
+                  },
+                  mobile_link: {
+                    type: "web",
+                    path: "https://forms.gle/8sZ9QEPs7oSEFJFk9",
+                  },
+                },
+              ],
+            },
+          ]
+        }
+      },
+      external_link: {
+        tag: "interactive_message",
+        interactive_message: {
+          elements: [
+            {
+              element_type: "title",
+              title: { text: "SeaTalk Open Platform API Guide" },
+            },
+            {
+              element_type: "description",
+              description: {
+                format: 1,
+                text: "Check out the official SeaTalk SDK documentation for workflows.\n\n*Click below to preview.*",
+              },
+            },
+            {
+              element_type: "button",
+              button: {
+                button_type: "redirect",
+                text: "SDK Documentation",
+                desktop_link: {
+                  type: "web",
+                  path: "https://open.seatalk.io",
+                },
+                mobile_link: {
+                  type: "web",
+                  path: "https://open.seatalk.io",
+                },
+              },
+            },
+          ]
+        }
+      }
+    };
+    if (presets[schedulerTemplate]) {
+      setInteractiveJson(JSON.stringify(presets[schedulerTemplate], null, 2));
+    }
+  }, [schedulerTemplate]);
 
   useEffect(() => {
     try {
@@ -4087,8 +4980,9 @@ function BroadcastsScheduler() {
   }, []);
 
   const handleAddBroadcast = async () => {
-    if (!name || !targetId || (msgType === "text" && !content)) {
-      toast.error("Please fill in all required fields.");
+    const finalContent = msgType === "interactive" ? interactiveJson : content;
+    if (!name || !targetId || !finalContent) {
+      toast.error("Please fill in all required fields and upload or type content.");
       return;
     }
     if (interval === "manual_time" && !scheduledTime) {
@@ -4109,7 +5003,7 @@ function BroadcastsScheduler() {
         chat_type: chatType,
         target_id: targetId,
         msg_type: msgType,
-        content: msgType === "text" ? content : interactiveJson,
+        content: finalContent,
         is_active: true,
         last_run_at: null,
         created_at: new Date().toISOString(),
@@ -4362,13 +5256,31 @@ function BroadcastsScheduler() {
                   <label className="text-xs font-semibold text-[#888888]">
                     Message Type
                   </label>
-                  <Select value={msgType} onValueChange={setMsgType}>
+                  <Select
+                    value={msgType}
+                    onValueChange={(val) => {
+                      setMsgType(val);
+                      if (val === "text") {
+                        setContent("");
+                      } else if (val === "interactive") {
+                        setContent("");
+                      } else {
+                        setContent("");
+                      }
+                    }}
+                  >
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="text">
-                        Plain Text / Markdown Link
+                        Rich Text / Markdown (with @Mentions)
+                      </SelectItem>
+                      <SelectItem value="image">
+                        Image Attachment
+                      </SelectItem>
+                      <SelectItem value="file">
+                        File Attachment
                       </SelectItem>
                       <SelectItem value="interactive">
                         SeaTalk Interactive Message Card (JSON)
@@ -4377,29 +5289,220 @@ function BroadcastsScheduler() {
                   </Select>
                 </div>
 
-                {msgType === "text" ? (
+                {msgType === "text" && (
                   <div className="space-y-1">
-                    <label className="text-xs font-semibold text-[#888888]">
-                      Message Text Content
-                    </label>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="text-xs font-semibold text-[#888888]">Message Text Content</label>
+                      <div className="flex bg-[#111] rounded-md p-1 gap-1 items-center border border-neutral-800 scale-90 origin-right">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-[#888888] hover:bg-neutral-800 hover:text-white"
+                          onClick={() => insertFormatInScheduler("**", "**")}
+                          title="Bold"
+                        >
+                          <Bold size={14} />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-[#888888] hover:bg-neutral-800 hover:text-white"
+                          onClick={() => insertFormatInScheduler("*", "*")}
+                          title="Italic"
+                        >
+                          <Italic size={14} />
+                        </Button>
+                        <div className="w-px h-3 bg-neutral-800 mx-0.5"></div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-[#888888] hover:bg-neutral-800 hover:text-white"
+                          onClick={() => insertFormatInScheduler("- ")}
+                          title="Bulleted List"
+                        >
+                          <List size={14} />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-[#888888] hover:bg-neutral-800 hover:text-white"
+                          onClick={() => insertFormatInScheduler("1. ")}
+                          title="Numbered List"
+                        >
+                          <ListOrdered size={14} />
+                        </Button>
+                        <div className="w-px h-3 bg-neutral-800 mx-0.5"></div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-[#888888] hover:bg-neutral-800 hover:text-white"
+                          onClick={() => insertFormatInScheduler("```\n", "\n```")}
+                          title="Code Block"
+                        >
+                          <Code size={14} />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-white bg-neutral-950 hover:bg-neutral-800 rounded ml-1"
+                          onClick={() => insertFormatInScheduler('<mention email="', '"></mention>')}
+                          title="Mention (@email)"
+                        >
+                          <AtSign size={14} className="text-neutral-400" />
+                        </Button>
+                      </div>
+                    </div>
                     <Textarea
+                      ref={textareaRef}
                       value={content}
                       onChange={(e) => setContent(e.target.value)}
-                      rows={4}
-                      placeholder="Type the broadcast message... Markdown list support is provided."
+                      rows={5}
+                      placeholder="Type the broadcast message... Markdown lists are fully enabled."
+                      className="font-mono text-xs"
                     />
                   </div>
-                ) : (
+                )}
+
+                {msgType === "image" && (
                   <div className="space-y-1">
-                    <label className="text-xs font-semibold text-[#888888]">
-                      Interactive JSON Configuration
-                    </label>
-                    <Textarea
-                      value={interactiveJson}
-                      onChange={(e) => setInteractiveJson(e.target.value)}
-                      rows={8}
-                      className="font-mono text-xs text-[#ececec] bg-[#0a0a0a] border border-[#222] text-green-400 p-3 rounded-lg"
+                    <label className="text-xs font-semibold text-[#888888]">Image Upload</label>
+                    <input
+                      type="file"
+                      ref={imageInputRef}
+                      onChange={(e) => handleFileUploadInScheduler(e, "image")}
+                      accept="image/*"
+                      className="hidden"
                     />
+                    <div
+                      onClick={() => imageInputRef.current?.click()}
+                      className="border-dashed border-2 border-neutral-800 rounded-xl p-8 bg-zinc-950/40 text-center hover:bg-zinc-950 hover:border-blue-800 cursor-pointer transition flex flex-col items-center justify-center gap-2"
+                    >
+                      <ImageIcon className="h-8 w-8 text-[#888888]" />
+                      <div className="text-xs text-[#ececec]">
+                        {uploading ? "Processing Image..." : "Click to select or upload image"}
+                      </div>
+                      <span className="text-[10px] text-neutral-500">Supports PNG, JPG, GIF up to 5MB</span>
+                    </div>
+
+                    {content && content.includes("tag") && (() => {
+                      try {
+                        const parsed = JSON.parse(content);
+                        if (parsed.tag === "image" && parsed.image?.content) {
+                          return (
+                            <div className="mt-3 relative w-full h-32 bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden flex items-center justify-center">
+                              <img
+                                src={`data:image/png;base64,${parsed.image.content}`}
+                                className="object-contain h-full w-full"
+                                alt="Scheduled preview"
+                              />
+                              <Button
+                                type="button"
+                                variant="destructive"
+                                size="sm"
+                                className="absolute bottom-2 right-2 scale-90 font-bold"
+                                onClick={() => setContent("")}
+                              >
+                                Clear Image
+                              </Button>
+                            </div>
+                          );
+                        }
+                      } catch (e) {}
+                      return null;
+                    })()}
+                  </div>
+                )}
+
+                {msgType === "file" && (
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-[#888888]">File Attachment Upload</label>
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={(e) => handleFileUploadInScheduler(e, "file")}
+                      className="hidden"
+                    />
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      className="border-dashed border-2 border-neutral-800 rounded-xl p-8 bg-zinc-950/40 text-center hover:bg-zinc-950 hover:border-blue-800 cursor-pointer transition flex flex-col items-center justify-center gap-2"
+                    >
+                      <FileText className="h-8 w-8 text-[#888888]" />
+                      <div className="text-xs text-[#ececec]">
+                        {uploading ? "Processing Document..." : "Click or upload document"}
+                      </div>
+                      <span className="text-[10px] text-neutral-500">Supports PDF, XLSX, CSV, DOC, TXT up to 10MB</span>
+                    </div>
+
+                    {content && content.includes("tag") && (() => {
+                      try {
+                        const parsed = JSON.parse(content);
+                        if (parsed.tag === "file" && parsed.file?.filename) {
+                          return (
+                            <div className="mt-3 p-3 bg-neutral-900 border border-neutral-800 rounded-lg flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <FileText className="text-blue-500 shrink-0" size={16} />
+                                <span className="text-xs text-white truncate font-medium max-w-xs">{parsed.file.filename}</span>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="destructive"
+                                size="sm"
+                                className="scale-90 font-bold"
+                                onClick={() => setContent("")}
+                              >
+                                Clear File
+                              </Button>
+                            </div>
+                          );
+                        }
+                      } catch (e) {}
+                      return null;
+                    })()}
+                  </div>
+                )}
+
+                {msgType === "interactive" && (
+                  <div className="space-y-3">
+                    <div className="space-y-1 animate-fadeIn">
+                      <label className="text-xs font-semibold text-[#888888]">
+                        Interactive Card Template
+                      </label>
+                      <Select value={schedulerTemplate} onValueChange={setSchedulerTemplate}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="basic_callback">Basic Callback Card</SelectItem>
+                          <SelectItem value="approval_flow">Approval Flow Action Buttons</SelectItem>
+                          <SelectItem value="daily_attendance">Daily Attendance Checkin</SelectItem>
+                          <SelectItem value="external_link">Open Platform API SDK Links</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[10px] text-[#888888]">
+                        Select a predefined card from the Workplace Playground presets.
+                      </p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-[#888888]">
+                        Interactive JSON Configuration (Playground Spec)
+                      </label>
+                      <Textarea
+                        value={interactiveJson}
+                        onChange={(e) => setInteractiveJson(e.target.value)}
+                        rows={8}
+                        className="font-mono text-xs text-[#ececec] bg-[#0a0a0a] border border-[#222] p-3 rounded-lg"
+                      />
+                      <p className="text-[10px] text-[#888888] italic">
+                        The raw JSON payload specifies the custom elements for SeaTalk interactive rendering.
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>
@@ -4472,9 +5575,53 @@ function BroadcastsScheduler() {
                         {b.target_id}
                       </span>
                     </div>
-                    <p className="text-xs text-[#888888] whitespace-nowrap overflow-hidden text-ellipsis max-w-lg bg-black px-2.5 py-1.5 rounded-md border border-[#222] font-mono">
-                      {b.content}
-                    </p>
+                    {(() => {
+                      try {
+                        const trimmed = (b.content || "").trim();
+                        if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+                          const parsed = JSON.parse(trimmed);
+                          if (parsed && parsed.tag === "interactive_message") {
+                            const iMsgObj = parsed.interactive_message || parsed;
+                            const els = iMsgObj.elements || [];
+                            const titleEl = els.find((el: any) => el.element_type === "title");
+                            return (
+                              <div className="flex items-center gap-1.5 text-xs text-indigo-400 bg-indigo-950/40 px-2.5 py-1.5 rounded-md border border-indigo-900/60 font-mono w-fit">
+                                <Sparkles size={12} />
+                                <span className="font-semibold text-white">Interactive Card:</span>
+                                <span>{titleEl?.title?.text || "No Title"}</span>
+                              </div>
+                            );
+                          } else if (parsed && parsed.tag === "image" && parsed.image?.content) {
+                            return (
+                              <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-950/30 px-2.5 py-1.5 rounded-md border border-emerald-900/40 font-mono max-w-sm">
+                                <ImageIcon size={12} />
+                                <span className="font-semibold text-white">Image Attachment</span>
+                                <div className="h-6 w-10 bg-black border border-neutral-800 rounded overflow-hidden shrink-0 flex items-center justify-center">
+                                  <img
+                                    src={`data:image/png;base64,${parsed.image.content}`}
+                                    className="object-contain h-full w-full"
+                                    alt="Thumbnail"
+                                  />
+                                </div>
+                              </div>
+                            );
+                          } else if (parsed && parsed.tag === "file" && parsed.file?.filename) {
+                            return (
+                              <div className="flex items-center gap-1.5 text-xs text-cyan-400 bg-cyan-950/30 px-2.5 py-1.5 rounded-md border border-cyan-900/50 font-mono w-fit">
+                                <FileText size={12} />
+                                <span className="font-semibold text-white">File:</span>
+                                <span className="truncate max-w-[180px]">{parsed.file.filename}</span>
+                              </div>
+                            );
+                          }
+                        }
+                      } catch (e) {}
+                      return (
+                        <p className="text-xs text-[#888888] whitespace-nowrap overflow-hidden text-ellipsis max-w-lg bg-black px-2.5 py-1.5 rounded-md border border-[#222] font-mono">
+                          {b.content}
+                        </p>
+                      );
+                    })()}
                     <div className="text-[10px] text-[#888888] font-medium">
                       Last Dispatch Date:{" "}
                       {b.last_run_at ? (
